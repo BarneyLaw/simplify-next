@@ -17,7 +17,7 @@ from adaptsg.domain import (
     ReplanTrigger,
     TriggerType,
 )
-from adaptsg.errors import NoFeasibleItinerary
+from adaptsg.errors import ApprovalRequired, NoFeasibleItinerary
 from adaptsg.planning import JourneyPlanner, JourneyReplanner
 from adaptsg.preference_parser import BedrockPreferenceParser, PreferenceParser
 from adaptsg.settings import Settings, get_settings
@@ -100,6 +100,12 @@ class AdaptSGService:
 
     def propose_replan(self, itinerary: Itinerary, trigger: ReplanTrigger) -> ReplanProposal:
         return self.replanner.propose(itinerary, trigger)
+
+    @staticmethod
+    def apply_proposal(proposal: ReplanProposal, *, approved: bool) -> Itinerary:
+        if proposal.requires_approval and not approved:
+            raise ApprovalRequired("this cost increase requires caregiver approval")
+        return proposal.itinerary
 
     def monitor(self, itinerary: Itinerary) -> MonitoringOutcome:
         snapshot = self.environment.current()
