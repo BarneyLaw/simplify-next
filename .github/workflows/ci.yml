@@ -49,7 +49,7 @@ jobs:
         run: node scripts/check_web.mjs
       - name: Vercel configuration syntax
         run: python -m json.tool vercel.json > /dev/null
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-report
