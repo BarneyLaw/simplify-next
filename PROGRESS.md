@@ -58,7 +58,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/streamlit-ui` | Streamlit demo and approval flow | Merged |
 | `feature/deployment` | Docker, FastAPI, Vercel and AWS SAM | Merged |
 | `feature/ci-tests` | 71 tests, 20 scenarios and CI/security gates | Merged |
-| `feature/project-documentation` | Governance, architecture, README and tracker | In progress |
+| `feature/project-documentation` | Governance, architecture, README and tracker | Merged |
 
 ## External setup still required
 
