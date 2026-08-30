@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AdaptSG - Vercel demo</title>
+  <style>
+    :root { color-scheme: light; --ink:#0f172a; --teal:#0f766e; --pale:#f0fdfa; --line:#cbd5e1; --warn:#92400e; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:16px/1.5 system-ui,sans-serif; color:var(--ink); background:#f8fafc; }
+    main { width:min(1100px,92vw); margin:2rem auto 5rem; }
+    h1 { font-size:clamp(2.2rem,7vw,4.5rem); margin:0; color:var(--teal); }
+    h2 { margin-top:2rem; }
+    .lede { font-size:1.2rem; max-width:760px; }
+    .card { background:white; border:1px solid var(--line); border-radius:14px; padding:1.2rem; margin:1rem 0; box-shadow:0 5px 20px #0f172a0a; }
+    label { display:block; font-weight:700; margin:.8rem 0 .35rem; }
+    textarea,input { width:100%; border:1px solid #64748b; border-radius:8px; padding:.75rem; font:inherit; }
+    textarea { min-height:130px; }
+    button { background:var(--teal); color:white; border:0; border-radius:8px; padding:.75rem 1rem; font-weight:700; cursor:pointer; margin:.4rem .35rem .4rem 0; }
+    button.secondary { background:#334155; }
+    button:focus { outline:3px solid #fbbf24; outline-offset:2px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:.8rem; }
+    .metric { background:var(--pale); border-radius:10px; padding:.8rem; }
+    .metric b { display:block; font-size:1.35rem; }
+    table { width:100%; border-collapse:collapse; margin-top:.8rem; }
+    th,td { text-align:left; padding:.65rem; border-bottom:1px solid var(--line); }
+    th { background:#e2e8f0; }
+    .table-wrap { overflow-x:auto; }
+    .status { border-left:5px solid var(--teal); padding:.75rem 1rem; background:var(--pale); }
+    .warning { border-left-color:#d97706; color:var(--warn); background:#fffbeb; }
+    .hidden { display:none; }
+    footer { margin-top:3rem; color:#475569; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>AdaptSG</h1>
+    <p class="lede">An inclusive journey-planning agent that preserves accessibility, health and budget constraints when conditions change.</p>
+    <p id="runtime" class="status" role="status">Checking Python API...</p>
+  </header>
+
+  <section class="card" aria-labelledby="plan-title">
+    <h2 id="plan-title">Plan the day</h2>
+    <label for="prompt">Traveller and constraints</label>
+    <textarea id="prompt">Plan a 10 am-5 pm day for me and my 72-year-old mother, starting from Toa Payoh. She uses a wheelchair, should not walk more than 400 metres at once, needs lunch before 1 pm, and we have a $70 transport and activity budget. We would like to visit Gardens by the Bay.</textarea>
+    <label for="journey-date">Journey date</label>
+    <input id="journey-date" type="date">
+    <button id="create">Create safe plan</button>
+  </section>
+
+  <section id="result" class="hidden" aria-live="polite">
+    <h2>Locked constraints</h2>
+    <div id="constraints" class="grid"></div>
+    <div class="card">
+      <h2>Current safe itinerary</h2>
+      <div id="summary" class="grid"></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Time</th><th>Stop</th><th>Transport</th><th>Walk</th><th>Cost</th><th>Access</th></tr></thead>
+        <tbody id="segments"></tbody>
+      </table></div>
+      <p id="source"></p>
+    </div>
+    <div class="card">
+      <h2>Five-minute demo events</h2>
+      <button id="rain">Heavy rain + flood</button>
+      <button id="fatigue">Mum is more tired</button>
+      <div id="proposal"></div>
+    </div>
+  </section>
+  <footer>The LLM proposes. Deterministic code validates. No booking, payment or medical diagnosis tools are present.</footer>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let itinerary = null;
+  const tomorrow = new Date(Date.now() + 86400000);
+  $('journey-date').value = tomorrow.toISOString().slice(0, 10);
+
+  function safe(value) {
+    return String(value).replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+  }
+  async function api(path, body) {
+    const response = await fetch(path, {method: body ? 'POST' : 'GET', headers:{'content-type':'application/json'}, body: body ? JSON.stringify(body) : undefined});
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || 'Request failed');
+    return payload;
+  }
+  function metric(label, value) { return `<div class="metric"><span>${safe(label)}</span><b>${safe(value)}</b></div>`; }
+  function money(value) { return `S$${Number(value).toFixed(2)}`; }
+  function clock(value) { return new Date(value).toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit',hour12:false}); }
+
+  function renderPlan(plan) {
+    itinerary = plan;
+    const hard = plan.request.hard;
+    $('result').classList.remove('hidden');
+    $('constraints').innerHTML = [
+      metric('Wheelchair access','Verified only'), metric('Walking per leg',`<= ${hard.max_walking_distance_m} m`),
+      metric('Lunch by',hard.lunch_latest.slice(0,5)), metric('Finish by',hard.finish_by.slice(0,5)),
+      metric('Budget',money(hard.total_budget_sgd))
+    ].join('');
+    $('summary').innerHTML = metric('Total cost',money(plan.total_cost_sgd)) + metric('Stops',plan.segments.length) + metric('Replans',`${plan.replan_count}/2`);
+    $('segments').innerHTML = plan.segments.map((segment) => `<tr>
+      <td>${safe(clock(segment.activity_start))}-${safe(clock(segment.activity_end))}</td>
+      <td>${safe(segment.venue.name)}</td><td>${safe(segment.route.mode.replace('_',' '))}</td>
+      <td>${safe(segment.route.walking_distance_m)} m</td>
+      <td>${safe(money(segment.route.estimated_cost_sgd + segment.venue.estimated_cost_sgd))}</td>
+      <td>${safe(segment.venue.accessibility_status)}</td></tr>`).join('');
+    $('source').textContent = `Parser: ${plan.parser_source}. Route numbers: ${plan.segments.map(s=>s.route.source).join(', ')}.`;
+    $('proposal').innerHTML = '';
+  }
+  function renderProposal(proposal) {
+    const changed = proposal.changes.map(change => `<p><b>Stop ${change.segment_index + 1}</b>: ${safe(change.before)} -> ${safe(change.after)}<br><small>${safe(change.reason)}</small></p>`).join('');
+    $('proposal').innerHTML = `<div class="status ${proposal.requires_approval ? 'warning' : ''}">
+      <h3>Proposed smallest safe adjustment</h3>${changed || '<p>No change required.</p>'}
+      <p><b>Cost change:</b> ${safe(money(proposal.cost_delta_sgd))}; <b>validation:</b> ${proposal.validation.valid ? 'PASS' : 'FAIL'}</p>
+      ${proposal.requires_approval ? '<p>Caregiver approval is required because the cost threshold is exceeded.</p>' : ''}
+      <button id="apply">${proposal.requires_approval ? 'Approve and apply' : 'Apply adjustment'}</button>
+      <button id="reject" class="secondary">Keep current plan</button></div>`;
+    $('apply').onclick = () => renderPlan(proposal.itinerary);
+    $('reject').onclick = () => { $('proposal').innerHTML = ''; };
+  }
+  async function replan(trigger) {
+    try { renderProposal(await api('/api/replan',{itinerary,trigger})); }
+    catch (error) { $('proposal').innerHTML = `<p class="status warning">${safe(error.message)} Current plan retained.</p>`; }
+  }
+
+  $('create').onclick = async () => {
+    $('runtime').textContent = 'Planning and validating...';
+    try {
+      const outcome = await api('/api/plan',{prompt:$('prompt').value,journey_date:$('journey-date').value});
+      renderPlan(outcome.itinerary);
+      $('runtime').textContent = outcome.warnings.length ? outcome.warnings.join(' ') : 'Plan validated successfully.';
+    } catch (error) { $('runtime').textContent = error.message; $('runtime').classList.add('warning'); }
+  };
+  $('rain').onclick = () => replan({type:'flood_alert',message:'Heavy rain began and a flood alert affects the outdoor segment.',affected_venue_ids:itinerary.segments.filter(s=>!s.venue.indoor).map(s=>s.venue.id)});
+  $('fatigue').onclick = () => replan({type:'fatigue',message:'Mum is more tired than expected; shorten travel and add rest.'});
+  api('/api/health').then(data => {$('runtime').textContent=`Python API ready (${data.mode} mode).`;}).catch(error => {$('runtime').textContent=error.message;$('runtime').classList.add('warning');});
+</script>
+</body>
+</html>

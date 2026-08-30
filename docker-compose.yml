@@ -1,0 +1,8 @@
+services:
+  adaptsg:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      ADAPTSG_MODE: ${ADAPTSG_MODE:-demo}
+    restart: unless-stopped
