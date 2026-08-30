@@ -198,6 +198,11 @@ class ReplanTrigger(StrictModel):
     new_budget_sgd: float | None = Field(default=None, ge=0)
 
 
+class MonitoringOutcome(StrictModel):
+    snapshot: EnvironmentSnapshot
+    triggers: tuple[ReplanTrigger, ...]
+
+
 class ValidationCode(StrEnum):
     ACCESSIBILITY = "accessibility"
     WALKING_DISTANCE = "walking_distance"
