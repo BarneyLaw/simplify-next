@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": "public",
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 30,
+      "excludeFiles": "{tests/**,htmlcov/**,infra/**,.github/**,.venv/**,streamlit_app.py,Dockerfile}"
+    }
+  }
+}

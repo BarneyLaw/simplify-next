@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: AdaptSG serverless API using Lambda and Amazon Bedrock.
+
+Parameters:
+  BedrockModelId:
+    Type: String
+    Default: global.anthropic.claude-haiku-4-5-20251001-v1:0
+  OneMapApiToken:
+    Type: String
+    NoEcho: true
+    Default: ""
+  LtaAccountKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+  DataGovSgApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [x86_64]
+    MemorySize: 512
+    Timeout: 30
+    Tracing: Active
+    Environment:
+      Variables:
+        ADAPTSG_MODE: live
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        ONEMAP_API_TOKEN: !Ref OneMapApiToken
+        LTA_ACCOUNT_KEY: !Ref LtaAccountKey
+        DATA_GOV_SG_API_KEY: !Ref DataGovSgApiKey
+
+Resources:
+  AdaptSgFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../..
+      Handler: adaptsg.aws_handler.handler
+      Description: AdaptSG plan and replan API.
+      Policies:
+        - Statement:
+            - Sid: InvokeConfiguredBedrockModels
+              Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: "*"
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: ["*"]
+          AllowMethods: [GET, POST]
+          AllowHeaders: [content-type]
+          MaxAge: 300
+
+Outputs:
+  AdaptSgFunctionUrl:
+    Description: Public hackathon demo API URL. Add production authentication before launch.
+    Value: !GetAtt AdaptSgFunctionUrl.FunctionUrl
