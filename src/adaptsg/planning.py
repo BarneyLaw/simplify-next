@@ -65,13 +65,23 @@ class JourneyPlanner:
         if len(non_food_required) > request.max_stops - 1:
             raise NoFeasibleItinerary("required venues leave no room for the mandatory lunch stop")
 
+        preferred = [
+            self.catalog.get(venue_id)
+            for venue_id in sorted(request.soft.preferred_venue_ids)
+            if venue_id not in request.hard.required_venue_ids
+        ]
         activities: list[Venue] = list(non_food_required)
+        for venue in preferred:
+            if venue.category is not VenueCategory.FOOD and len(activities) < request.max_stops - 1:
+                activities.append(venue)
         defaults = (self.catalog.get("national-gallery"), self.catalog.get("gardens-bay-outdoor"))
         for venue in defaults:
             if len(activities) >= request.max_stops - 1:
                 break
             if venue.id not in {item.id for item in activities}:
                 activities.append(venue)
+        priority = {venue.id: index for index, venue in enumerate(defaults)}
+        activities.sort(key=lambda venue: (priority.get(venue.id, len(priority)), venue.id))
 
         lunch = next(
             (venue for venue in required if venue.category is VenueCategory.FOOD),

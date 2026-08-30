@@ -91,6 +91,7 @@ class HardConstraints(StrictModel):
 
 class SoftPreferences(StrictModel):
     preferred_categories: tuple[VenueCategory, ...] = (VenueCategory.INDOOR_MUSEUM,)
+    preferred_venue_ids: frozenset[str] = frozenset()
     prefer_public_transport: bool = True
     minimise_cost: bool = True
     avoid_crowds: bool = False
@@ -111,6 +112,18 @@ class JourneyRequest(StrictModel):
         if self.hard.finish_by <= self.start_time:
             raise ValueError("finish_by must be later than start_time")
         return self
+
+
+class TokenUsage(StrictModel):
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+
+
+class ParseOutcome(StrictModel):
+    request: JourneyRequest
+    source: str
+    warnings: tuple[str, ...] = ()
+    token_usage: TokenUsage = TokenUsage()
 
 
 class RouteLeg(StrictModel):
@@ -161,6 +174,12 @@ class Itinerary(StrictModel):
     created_at: datetime
     replan_count: int = Field(default=0, ge=0)
     parser_source: str = "deterministic"
+
+
+class PlanOutcome(StrictModel):
+    itinerary: Itinerary
+    warnings: tuple[str, ...] = ()
+    token_usage: TokenUsage = TokenUsage()
 
 
 class EnvironmentSnapshot(StrictModel):
