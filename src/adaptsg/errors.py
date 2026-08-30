@@ -15,3 +15,7 @@ class ReplanLimitReached(AdaptSGError):
 
 class ApprovalRequired(AdaptSGError):
     """Raised when a material proposal is applied without approval."""
+
+
+class ToolUnavailable(AdaptSGError):
+    """Raised when live verification cannot provide required typed data."""

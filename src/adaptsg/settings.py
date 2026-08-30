@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     adaptsg_max_replans: int = Field(default=2, ge=1, le=3)
     adaptsg_journeys_table: str | None = None
     onemap_api_token: str | None = None
+    onemap_bfa_enabled: bool = False
     data_gov_sg_api_key: str | None = None
+    lta_account_key: str | None = None
 
 
 @lru_cache(maxsize=1)
