@@ -15,4 +15,3 @@ class ReplanLimitReached(AdaptSGError):
 
 class ApprovalRequired(AdaptSGError):
     """Raised when a material proposal is applied without approval."""
-

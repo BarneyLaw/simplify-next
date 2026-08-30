@@ -181,8 +181,7 @@ class ItineraryValidator:
                 ValidationIssue(
                     code=ValidationCode.BUDGET,
                     message=(
-                        f"computed cost S${computed_cost:.2f} exceeds "
-                        f"S${hard.total_budget_sgd:.2f}"
+                        f"computed cost S${computed_cost:.2f} exceeds S${hard.total_budget_sgd:.2f}"
                     ),
                 )
             )

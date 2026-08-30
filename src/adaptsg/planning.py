@@ -78,10 +78,7 @@ class JourneyPlanner:
             self.catalog.get("funan-food-court"),
         )
         if request.hard.wheelchair_accessible_required:
-            eligible_ids = {
-                venue.id
-                for venue in self.catalog.eligible(wheelchair_required=True)
-            }
+            eligible_ids = {venue.id for venue in self.catalog.eligible(wheelchair_required=True)}
             selected_ids = {venue.id for venue in (*activities, lunch)}
             if not selected_ids <= eligible_ids:
                 raise NoFeasibleItinerary("a required venue lacks verified accessibility data")
@@ -377,9 +374,7 @@ class JourneyReplanner:
         return changed * 10_000 + positive_cost_delta * 100 + walking
 
     @staticmethod
-    def _diff(
-        before: Itinerary, after: Itinerary, reason: str
-    ) -> tuple[ItineraryChange, ...]:
+    def _diff(before: Itinerary, after: Itinerary, reason: str) -> tuple[ItineraryChange, ...]:
         changes = []
         for index, (left, right) in enumerate(zip(before.segments, after.segments, strict=True)):
             left_duration = round((left.activity_end - left.activity_start).total_seconds() / 60)
