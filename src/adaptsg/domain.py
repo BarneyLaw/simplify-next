@@ -191,6 +191,9 @@ class ValidationCode(StrEnum):
     LOCATION_PROVENANCE = "location_provenance"
     ROUTE_PROVENANCE = "route_provenance"
     REPLAN_LIMIT = "replan_limit"
+    STOP_LIMIT = "stop_limit"
+    FINISH_TIME = "finish_time"
+    COST_CALCULATION = "cost_calculation"
 
 
 class ValidationIssue(StrictModel):
@@ -220,4 +223,3 @@ class ReplanProposal(StrictModel):
     requires_approval: bool
     validation: ValidationResult
     status: ProposalStatus = ProposalStatus.PENDING
-
