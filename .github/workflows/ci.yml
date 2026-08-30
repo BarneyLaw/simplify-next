@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  correctness:
+    name: Static analysis, security, and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade "pip>=26.2"
+          python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Ruff format
+        run: python -m ruff format --check .
+      - name: Ruff lint
+        run: python -m ruff check .
+      - name: Strict typing
+        run: python -m mypy
+      - name: Unit and scenario tests
+        run: python -m pytest
+      - name: Security lint
+        run: python -m bandit -q -r src api streamlit_app.py
+      - name: Dependency audit
+        run: python -m pip_audit --skip-editable
+      - name: Browser JavaScript syntax
+        run: node scripts/check_web.mjs
+      - name: Vercel configuration syntax
+        run: python -m json.tool vercel.json > /dev/null
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: correctness
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build local demo image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: adaptsg:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  sam:
+    name: AWS SAM validates and builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: correctness
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: aws-actions/setup-sam@v2
+      - name: Validate template
+        run: sam validate --lint --template-file infra/aws/template.yaml
+      - name: Build Lambda artifact
+        run: sam build --template-file infra/aws/template.yaml

@@ -161,13 +161,13 @@ def test_evaluation_scenario(
     try:
         if scenario.kind == "initial":
             hard = journey_request.hard.model_copy(update=scenario.hard_updates or {})
-            result = planner.create(journey_request.model_copy(update={"hard": hard}))
-            feasible = planner.validator.validate(result).valid
+            plan_result = planner.create(journey_request.model_copy(update={"hard": hard}))
+            feasible = planner.validator.validate(plan_result).valid
         else:
             assert scenario.trigger is not None
             start = itinerary.model_copy(update={"replan_count": scenario.starting_replans})
-            result = replanner.propose(start, scenario.trigger)
-            feasible = result.validation.valid
+            proposal_result = replanner.propose(start, scenario.trigger)
+            feasible = proposal_result.validation.valid
     except (NoFeasibleItinerary, ReplanLimitReached, KeyError):
         feasible = False
     assert feasible is scenario.expected_feasible
