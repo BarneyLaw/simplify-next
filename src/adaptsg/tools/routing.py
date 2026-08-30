@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from math import asin, ceil, cos, radians, sin, sqrt
 from typing import Protocol
 
@@ -77,6 +77,5 @@ class DemoRoutingClient:
             walking_distance_m=walking_distance,
             estimated_cost_sgd=cost,
             source=self.source,
-            source_timestamp=datetime.now(timezone.utc),
+            source_timestamp=datetime.now(UTC),
         )
-

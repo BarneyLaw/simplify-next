@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -59,7 +59,9 @@ class JourneyPlanner:
         required = [
             self.catalog.get(venue_id) for venue_id in sorted(request.hard.required_venue_ids)
         ]
-        non_food_required = [venue for venue in required if venue.category is not VenueCategory.FOOD]
+        non_food_required = [
+            venue for venue in required if venue.category is not VenueCategory.FOOD
+        ]
         if len(non_food_required) > request.max_stops - 1:
             raise NoFeasibleItinerary("required venues leave no room for the mandatory lunch stop")
 
@@ -91,7 +93,9 @@ class JourneyPlanner:
     @staticmethod
     def _purposes_for(venues: tuple[Venue, ...]) -> tuple[SegmentPurpose, ...]:
         return tuple(
-            SegmentPurpose.LUNCH if venue.category is VenueCategory.FOOD else SegmentPurpose.ACTIVITY
+            SegmentPurpose.LUNCH
+            if venue.category is VenueCategory.FOOD
+            else SegmentPurpose.ACTIVITY
             for venue in venues
         )
 
@@ -113,7 +117,9 @@ class JourneyPlanner:
             current_location = preserved_prefix[-1].venue.location
             current_label = preserved_prefix[-1].venue.name
         else:
-            current_time = datetime.combine(request.journey_date, request.start_time, tzinfo=SINGAPORE)
+            current_time = datetime.combine(
+                request.journey_date, request.start_time, tzinfo=SINGAPORE
+            )
             current_location = request.start_location
             current_label = request.start_label
 
@@ -132,7 +138,9 @@ class JourneyPlanner:
                 max_walking_distance_m=request.hard.max_walking_distance_m,
             )
             activity_start = route.arrive_at
-            venue_open = datetime.combine(request.journey_date, venue.opening_time, tzinfo=SINGAPORE)
+            venue_open = datetime.combine(
+                request.journey_date, venue.opening_time, tzinfo=SINGAPORE
+            )
             if activity_start < venue_open:
                 activity_start = venue_open
             duration = durations[index] if durations else venue.average_duration_minutes
@@ -165,7 +173,7 @@ class JourneyPlanner:
             request=request,
             segments=tuple(segments),
             total_cost_sgd=total_cost,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             replan_count=replan_count,
             parser_source=parser_source,
         )
@@ -227,7 +235,10 @@ class JourneyReplanner:
     ) -> tuple[Itinerary, ...]:
         affected = self._affected_indices(itinerary, trigger)
         if not affected:
-            return (itinerary.model_copy(update={"id": uuid4(), "replan_count": itinerary.replan_count + 1}),)
+            unchanged = itinerary.model_copy(
+                update={"id": uuid4(), "replan_count": itinerary.replan_count + 1}
+            )
+            return (unchanged,)
         first = min(affected)
         original_venues = tuple(segment.venue for segment in itinerary.segments)
         purposes = tuple(segment.purpose for segment in itinerary.segments)
@@ -378,8 +389,12 @@ class JourneyReplanner:
                 or left.route.mode != right.route.mode
                 or left_duration != right_duration
             ):
-                before_label = f"{left.venue.name} via {left.route.mode.value} ({left_duration} min)"
-                after_label = f"{right.venue.name} via {right.route.mode.value} ({right_duration} min)"
+                before_label = (
+                    f"{left.venue.name} via {left.route.mode.value} ({left_duration} min)"
+                )
+                after_label = (
+                    f"{right.venue.name} via {right.route.mode.value} ({right_duration} min)"
+                )
                 changes.append(
                     ItineraryChange(
                         segment_index=index,

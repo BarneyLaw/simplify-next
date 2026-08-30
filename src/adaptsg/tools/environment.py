@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 from adaptsg.domain import EnvironmentSnapshot
@@ -32,7 +32,6 @@ class DemoEnvironmentClient:
             psi=self._psi,
             flood_affected_venue_ids=self._floods,
             disrupted_route_labels=self._disruptions,
-            observed_at=datetime.now(timezone.utc),
+            observed_at=datetime.now(UTC),
             source="demo_environment_snapshot_v1",
         )
-

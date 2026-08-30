@@ -93,7 +93,9 @@ class ItineraryValidator:
                 issues.append(
                     ValidationIssue(
                         code=ValidationCode.LOCATION_PROVENANCE,
-                        message=f"route destination does not match catalog location for {venue.name}",
+                        message=(
+                            f"route destination does not match catalog location for {venue.name}"
+                        ),
                         segment_id=segment.id,
                     )
                 )

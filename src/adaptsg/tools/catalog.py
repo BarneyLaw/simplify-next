@@ -41,7 +41,10 @@ class VenueCatalog:
         for venue in self._venues:
             if venue.id in excluded_ids:
                 continue
-            if wheelchair_required and venue.accessibility_status is not AccessibilityStatus.VERIFIED:
+            if (
+                wheelchair_required
+                and venue.accessibility_status is not AccessibilityStatus.VERIFIED
+            ):
                 continue
             if indoor_only and not venue.indoor:
                 continue
@@ -49,4 +52,3 @@ class VenueCatalog:
                 continue
             eligible.append(venue)
         return tuple(eligible)
-
