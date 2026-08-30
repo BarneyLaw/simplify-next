@@ -12,6 +12,8 @@ from adaptsg.domain import (
 )
 from adaptsg.errors import ApprovalRequired, NoFeasibleItinerary, ReplanLimitReached
 from adaptsg.planning import JourneyPlanner, JourneyReplanner
+from adaptsg.preference_parser import DeterministicPreferenceParser
+from adaptsg.tools.catalog import VenueCatalog
 from adaptsg.tools.environment import DemoEnvironmentClient
 
 
@@ -133,7 +135,7 @@ def test_apply_proposal_enforces_material_approval(
         ReplanTrigger(type=TriggerType.FATIGUE, message="Tired"),
     )
     service = AdaptSGService(
-        parser=None,  # type: ignore[arg-type]
+        parser=DeterministicPreferenceParser(VenueCatalog()),
         planner=planner,
         replanner=replanner,
         environment=DemoEnvironmentClient(),
