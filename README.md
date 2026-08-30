@@ -313,4 +313,3 @@ Every feature must use `feature/<name>`, receive incremental Conventional Commit
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
