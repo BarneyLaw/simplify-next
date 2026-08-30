@@ -37,6 +37,8 @@ Globals:
 Resources:
   AdaptSgFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
     Properties:
       CodeUri: ../..
       Handler: adaptsg.aws_handler.handler

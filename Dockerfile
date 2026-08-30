@@ -11,7 +11,7 @@ RUN groupadd --system adaptsg && useradd --system --gid adaptsg --create-home ad
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
-RUN python -m pip install .
+RUN python -m pip install ".[ui]"
 
 COPY .streamlit ./.streamlit
 COPY streamlit_app.py ./streamlit_app.py
