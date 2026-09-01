@@ -45,6 +45,19 @@ Do not duplicate a core rule in a UI or prompt. Put it in the domain or validato
 7. Never force-push, reset, rewrite shared history or discard another contributor's work without explicit approval.
 8. Update `PROGRESS.md` when a feature is merged, a blocker is discovered or a metric changes.
 
+## Team role activation
+
+When a user starts a task with `ROLE 1`, `ROLE 2`, `ROLE 3`, `ROLE 4`, or the matching role
+title, read `TEAM_WORKFLOW.md` and the corresponding file in `docs/roles/` before editing.
+Treat that role's path list as an ownership boundary. If the requested change crosses an
+ownership boundary, prepare the documented handoff or contract-change request instead of
+editing another role's files without coordination.
+
+If the user states only a role and no task, select the highest-priority unfinished item in
+`PROGRESS.md` that is inside that role's ownership, state the selection, and proceed. Every
+role remains subject to all product, safety, Git, coding, correctness, and definition-of-done
+rules in this file.
+
 ## Coding standard
 
 - Target Python 3.12 and use full type annotations.
