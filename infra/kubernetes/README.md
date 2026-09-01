@@ -14,7 +14,8 @@ This directory defines the LAN-accessible AdaptSG development and test environme
   checks out `main`; a pod restart refreshes it to the latest remote commit.
 - The app runs in deterministic `ADAPTSG_MODE=demo`. No provider credentials are stored in
   Git or the cluster manifests.
-- Python `debugpy` listens on pod port 5678, but no Service or Ingress exposes that port.
+- Python `debugpy` listens only on pod loopback port 5678. No declared container port,
+  Service, or Ingress exposes it.
 - A diagnostics sidecar supplies `curl`, DNS, socket, route, packet, and process tools. The
   pod shares its process namespace so the sidecar can inspect the app process.
 - Node is copied into the app container at startup, and the project is installed editable
@@ -23,6 +24,8 @@ This directory defines the LAN-accessible AdaptSG development and test environme
 - The pod receives no Kubernetes API token. The diagnostics sidecar has only the three
   capabilities required for packet, route, and cross-process inspection; it has no host
   network, host PID, privileged mode, or LAN route.
+- The Longhorn claim is protected from Argo pruning and Application deletion. Back up or copy
+  any irreplaceable edits before manually deleting the claim.
 
 ## Bootstrap and status
 
@@ -60,6 +63,10 @@ kubectl port-forward -n adaptsg-dev deploy/adaptsg-dev 5678:5678
 
 Configure the IDE for Python attach at `127.0.0.1:5678`. The app does not pause waiting for
 the debugger, so the shared LAN UI remains usable.
+
+The route provides independent Streamlit browser sessions, not isolated operating-system
+workspaces. Everyone with Kubernetes `pods/exec` permission shares the same checked-out tree
+and can use the elevated diagnostics capabilities; restrict namespace RBAC accordingly.
 
 To update the working tree without recreating the pod:
 

@@ -36,9 +36,12 @@ spec:
           args:
             - |
               if [ ! -d /workspace/source/.git ]; then
-                git clone --depth 1 --branch "${TARGET_REVISION}" "${REPOSITORY_URL}" /workspace/source
+                timeout -s TERM 120 git clone --depth 1 --branch "${TARGET_REVISION}" \
+                  "${REPOSITORY_URL}" /workspace/source
               else
-                git -C /workspace/source fetch --depth 1 origin "${TARGET_REVISION}"
+                timeout -s TERM 120 git -C /workspace/source \
+                  -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=30 \
+                  fetch --depth 1 origin "${TARGET_REVISION}"
                 if ! git -C /workspace/source diff --quiet || \
                    ! git -C /workspace/source diff --cached --quiet; then
                   echo "Workspace has uncommitted changes; refusing to overwrite them." >&2
@@ -46,7 +49,6 @@ spec:
                 fi
                 git -C /workspace/source checkout -B "${TARGET_REVISION}" FETCH_HEAD
               fi
-              chown -R 1000:1000 /workspace
           env:
             - name: REPOSITORY_URL
               value: https://github.com/BarneyLaw/simplify-next.git
@@ -61,8 +63,12 @@ spec:
               memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
-            runAsNonRoot: false
-            runAsUser: 0
+            capabilities:
+              drop:
+                - ALL
+            runAsGroup: 1000
+            runAsNonRoot: true
+            runAsUser: 1000
           volumeMounts:
             - name: workspace
               mountPath: /workspace
@@ -106,8 +112,8 @@ spec:
               cd /workspace/source
               python -m venv .venv
               .venv/bin/python -m pip install --upgrade "pip>=26.2"
-              .venv/bin/python -m pip install -e '.[ui,dev]' 'debugpy>=1.8,<2'
-              exec .venv/bin/python -m debugpy --listen 0.0.0.0:5678 \
+              .venv/bin/python -m pip install -e '.[ui,dev]'
+              exec .venv/bin/python -m debugpy --listen 127.0.0.1:5678 \
                 -m streamlit run streamlit_app.py \
                 --server.address=0.0.0.0 \
                 --server.port=8501 \
@@ -131,9 +137,6 @@ spec:
             - name: http
               containerPort: 8501
               protocol: TCP
-            - name: debugpy
-              containerPort: 5678
-              protocol: TCP
           startupProbe:
             httpGet:
               path: /_stcore/health
@@ -147,13 +150,6 @@ spec:
               port: http
             failureThreshold: 3
             periodSeconds: 10
-            timeoutSeconds: 3
-          livenessProbe:
-            httpGet:
-              path: /_stcore/health
-              port: http
-            failureThreshold: 3
-            periodSeconds: 30
             timeoutSeconds: 3
           resources:
             requests:

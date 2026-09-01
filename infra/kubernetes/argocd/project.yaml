@@ -11,7 +11,15 @@ spec:
     - namespace: adaptsg-dev
       server: https://kubernetes.default.svc
   namespaceResourceWhitelist:
-    - group: "*"
-      kind: "*"
+    - group: ""
+      kind: PersistentVolumeClaim
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: traefik.io
+      kind: IngressRoute
   orphanedResources:
     warn: true
