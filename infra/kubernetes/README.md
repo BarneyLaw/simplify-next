@@ -1,80 +1,36 @@
 # Kubernetes development environment
 
-This directory defines the LAN-accessible AdaptSG development and test environment at
-`https://sim-next.lab.packetcraft.dev`.
+The cluster deployment is intentionally maintained in the dedicated GitOps repository rather
+than duplicated here:
 
-## Design
+- Repository: `BarneyLaw/homelab-cicd-config`
+- Application manifests: `apps/adaptsg-dev/`
+- Argo CD bootstrap: `argocd/adaptsg-dev.yaml`
+- LAN route: `https://sim-next.lab.packetcraft.dev`
 
-- `bootstrap-application.yaml` is the only manifest applied manually. It creates the tracked
-  `adaptsg` AppProject and `adaptsg-dev` Application from `infra/kubernetes/argocd/`.
-- Argo CD continuously reconciles `infra/kubernetes/dev/` into `adaptsg-dev`.
-- One Streamlit replica is intentional. Streamlit isolates `st.session_state` per browser
-  WebSocket while a single replica avoids cross-replica in-memory session loss.
-- The source and virtual environment live on a 5 GiB Longhorn volume. The init container
-  checks out `main`; a pod restart refreshes it to the latest remote commit.
-- The app runs in deterministic `ADAPTSG_MODE=demo`. No provider credentials are stored in
-  Git or the cluster manifests.
-- Python `debugpy` listens only on pod loopback port 5678. No declared container port,
-  Service, or Ingress exposes it.
-- A diagnostics sidecar supplies `curl`, DNS, socket, route, packet, and process tools. The
-  pod shares its process namespace so the sidecar can inspect the app process.
-- Node is copied into the app container at startup, and the project is installed editable
-  with its UI and development extras, so the complete `scripts/check.sh` gate runs against
-  the checked-out source in one container.
-- The pod receives no Kubernetes API token. The diagnostics sidecar has only the three
-  capabilities required for packet, route, and cross-process inspection; it has no host
-  network, host PID, privileged mode, or LAN route.
-- The Longhorn claim is protected from Argo pruning and Application deletion. Back up or copy
-  any irreplaceable edits before manually deleting the claim.
+The homelab configuration creates a dedicated `adaptsg` AppProject and `adaptsg-dev`
+Application. It provides Python 3.12, the full editable development dependencies, Node 22,
+localhost-only debugpy, an unexposed diagnostics sidecar, and a prune-protected Longhorn
+workspace.
 
-## Bootstrap and status
+Run the full repository gate inside the deployed app container:
 
 ```sh
-kubectl apply -f infra/kubernetes/bootstrap-application.yaml
-kubectl wait --for=jsonpath='{.status.health.status}'=Healthy \
-  application/adaptsg-dev -n argocd --timeout=10m
-kubectl get application adaptsg-bootstrap adaptsg-dev -n argocd
-kubectl get pods,service,pvc -n adaptsg-dev
+kubectl exec -n adaptsg-dev deploy/adaptsg-dev -c app -- ./scripts/check.sh
 ```
 
-The wildcard LAN DNS record and Traefik's default wildcard TLS certificate already cover
-`sim-next.lab.packetcraft.dev`.
-
-## Test and debug
-
-Run the full repository gate inside the app container:
-
-```sh
-kubectl exec -n adaptsg-dev deploy/adaptsg-dev -c app -- \
-  /bin/sh -lc 'cd /workspace/source && ./scripts/check.sh'
-```
-
-Use the diagnostics sidecar without exposing a toolbox to the LAN:
+Use network and process diagnostics:
 
 ```sh
 kubectl exec -it -n adaptsg-dev deploy/adaptsg-dev -c diagnostics -- /bin/sh
 ```
 
-Attach a local debugger through a temporary, authenticated Kubernetes tunnel:
+Attach the localhost-only Python debugger through Kubernetes:
 
 ```sh
 kubectl port-forward -n adaptsg-dev deploy/adaptsg-dev 5678:5678
 ```
 
-Configure the IDE for Python attach at `127.0.0.1:5678`. The app does not pause waiting for
-the debugger, so the shared LAN UI remains usable.
-
-The route provides independent Streamlit browser sessions, not isolated operating-system
-workspaces. Everyone with Kubernetes `pods/exec` permission shares the same checked-out tree
-and can use the elevated diagnostics capabilities; restrict namespace RBAC accordingly.
-
-To update the working tree without recreating the pod:
-
-```sh
-kubectl exec -n adaptsg-dev deploy/adaptsg-dev -c app -- \
-  /bin/sh -lc 'cd /workspace/source && git pull --ff-only origin main'
-```
-
-Streamlit watches the source tree and reruns when files change. A pod restart also performs
-a checkout of the latest `main` revision while preserving the volume. The init container
-refuses to overwrite uncommitted tracked edits; commit or copy those edits before restarting.
+Streamlit provides independent state per browser WebSocket session. The pod has one shared
+filesystem for Kubernetes users with `pods/exec`; it is not a per-developer operating-system
+isolation boundary.
