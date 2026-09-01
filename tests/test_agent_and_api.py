@@ -1,8 +1,10 @@
 from datetime import date
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+import adaptsg.web_api as web_api
 from adaptsg.agent import AdaptSGService
 from adaptsg.domain import (
     Itinerary,
@@ -137,8 +139,17 @@ def test_presentation_rows_and_retention(itinerary: Itinerary, replanner: Journe
 
 
 def test_fastapi_plan_replan_and_static_page(
-    planner: JourneyPlanner, replanner: JourneyReplanner
+    planner: JourneyPlanner,
+    replanner: JourneyReplanner,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(repository_root)
+    monkeypatch.setattr(
+        web_api,
+        "__file__",
+        "/opt/hostedtoolcache/Python/3.12/site-packages/adaptsg/web_api.py",
+    )
     client = TestClient(create_app(make_service(planner, replanner)))
     health = client.get("/api/health")
     assert health.status_code == 200

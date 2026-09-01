@@ -31,6 +31,15 @@ class ReplanApiRequest(StrictModel):
     trigger: ReplanTrigger
 
 
+def public_directory() -> Path | None:
+    """Find browser assets in a source checkout or a non-editable installation."""
+    candidates = (
+        Path(__file__).resolve().parents[2] / "public",
+        Path.cwd() / "public",
+    )
+    return next((candidate for candidate in candidates if candidate.is_dir()), None)
+
+
 def create_app(service: AdaptSGService | None = None) -> FastAPI:
     resolved_service = service or build_service()
     app = FastAPI(
@@ -58,9 +67,9 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
     def replan(payload: ReplanApiRequest) -> ReplanProposal:
         return resolved_service.propose_replan(payload.itinerary, payload.trigger)
 
-    public_directory = Path(__file__).resolve().parents[2] / "public"
-    if public_directory.is_dir():
-        app.mount("/", StaticFiles(directory=public_directory, html=True), name="static-demo")
+    static_assets = public_directory()
+    if static_assets is not None:
+        app.mount("/", StaticFiles(directory=static_assets, html=True), name="static-demo")
 
     return app
 

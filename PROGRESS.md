@@ -1,10 +1,10 @@
 # AdaptSG Progress
 
-Last updated: 2026-08-30 (Asia/Singapore)
+Last updated: 2026-09-01 (Asia/Singapore)
 
 ## Current status
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. Live cloud deployment is intentionally pending credentials, provider approvals and the first GitHub Actions run.
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. Live provider mode remains pending credentials and provider approvals.
 
 ## Completed milestones
 
@@ -24,6 +24,9 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 - [x] Added Ruff, strict mypy, Bandit, dependency audit and 90% coverage gates.
 - [x] Added Docker build and SAM validate/build jobs to GitHub Actions.
 - [x] Added `AGENTS.md`, `ARCHITECTURE.md`, this tracker and a judge-oriented README.
+- [x] Added collision-free four-role coding-agent ownership and handoff instructions.
+- [x] Deployed a Python 3.12/Node 22 debug environment through the homelab Argo CD repository.
+- [x] Exposed the Streamlit demo at `https://sim-next.lab.packetcraft.dev` with LAN DNS and TLS.
 
 ## Verified baseline
 
@@ -40,10 +43,13 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 | FastAPI plan/replan | Passed | Local `TestClient` integration |
 | Vercel browser JS syntax | Passed | `scripts/check_web.mjs` |
 | Live provider parsers | Passed with mocks | Bedrock, OneMap, data.gov.sg, LTA/PUB |
-| Docker image build | Pending CI | Docker CLI unavailable locally |
-| SAM validate/build | Pending CI | SAM CLI unavailable locally; YAML parsed locally |
+| Docker image build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
+| SAM validate/build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
 | Vercel platform build | Pending deployment | Vercel CLI/account unavailable locally |
-| Browser visual QA of Vercel page | Pending | No in-app/extension browser connected |
+| Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
+| Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
+| LAN DNS/TLS/health | Passed | `sim-next.lab.packetcraft.dev` -> `192.168.1.250`; trusted HTTPS 200 |
+| Browser visual/session QA | Blocked | No in-app or extension browser connected in this session |
 
 ## Current feature branches and merges
 
@@ -59,6 +65,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/deployment` | Docker, FastAPI, Vercel and AWS SAM | Merged |
 | `feature/ci-tests` | 71 tests, 20 scenarios and CI/security gates | Merged |
 | `feature/project-documentation` | Governance, architecture, README and tracker | Merged |
+| `feature/kubernetes-dev-environment` | Role workflow, dev dependency and CI portability fix | PR #9 passing; merge blocked by review policy |
 
 ## External setup still required
 
@@ -67,9 +74,11 @@ The repository keeps each feature boundary visible and uses incremental commits.
 3. Request an LTA DataMall account key.
 4. Confirm the selected Bedrock model is enabled in `us-east-1`.
 5. Refresh hackathon AWS session credentials immediately before the live demo.
-6. Run the GitHub Actions workflow on the remote repository.
-7. Deploy the Vercel demo and inspect it in a connected browser at desktop and mobile widths.
-8. Deploy the SAM stack, test the Function URL, then delete it when not in use.
+6. Obtain the required review for AdaptSG PR #9; all CI checks are passing.
+7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
+8. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
+9. Deploy the Vercel demo and inspect it in a connected browser at desktop and mobile widths.
+10. Deploy the SAM stack, test the Function URL, then delete it when not in use.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
 

@@ -1,5 +1,6 @@
 -r requirements.txt
 bandit[toml]>=1.8,<2
+debugpy>=1.8,<2
 mypy>=1.14,<2
 pip-audit>=2.8,<3
 pytest>=9.0.3,<10
