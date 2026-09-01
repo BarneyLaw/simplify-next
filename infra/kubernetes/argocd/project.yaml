@@ -1,0 +1,17 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: adaptsg
+  namespace: argocd
+spec:
+  description: AdaptSG development and test environments
+  sourceRepos:
+    - https://github.com/BarneyLaw/simplify-next.git
+  destinations:
+    - namespace: adaptsg-dev
+      server: https://kubernetes.default.svc
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  orphanedResources:
+    warn: true
