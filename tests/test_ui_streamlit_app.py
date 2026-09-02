@@ -1,0 +1,141 @@
+"""Role 3 gate for the Streamlit demo flow, driven headlessly with AppTest."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import streamlit as st
+from streamlit.testing.v1 import AppTest
+
+from adaptsg.errors import ToolUnavailable
+from adaptsg.settings import get_settings
+from adaptsg.tools.environment import DemoEnvironmentClient
+
+APP = Path(__file__).resolve().parents[1] / "streamlit_app.py"
+
+INFEASIBLE_PROMPT = (
+    "Plan a wheelchair day from Toa Payoh, must visit Gardens by the Bay and "
+    "National Gallery and Botanic Gardens and National Museum, finish by 10:30am, budget $5."
+)
+
+
+@pytest.fixture(autouse=True)
+def isolated_streamlit_runtime() -> None:
+    """Each app run must start from a cold service cache and settings cache."""
+    st.cache_resource.clear()
+    get_settings.cache_clear()
+
+
+def start_app() -> AppTest:
+    app = AppTest.from_file(str(APP), default_timeout=60)
+    app.run()
+    return app
+
+
+def click(app: AppTest, label: str) -> AppTest:
+    """Click by visible label so the tests do not depend on widget ordering."""
+    for button in app.button:
+        if button.label == label:
+            return button.click().run()
+    raise AssertionError(f"no button labelled {label!r}; found {[b.label for b in app.button]}")
+
+
+def plan(app: AppTest, prompt: str | None = None) -> AppTest:
+    if prompt is not None:
+        app.text_area[0].set_value(prompt)
+    return click(app, "Create safe plan")
+
+
+def test_app_asks_for_a_plan_before_anything_exists() -> None:
+    app = start_app()
+
+    assert not app.exception
+    assert any("Create a plan to begin" in message.value for message in app.info)
+    assert not app.dataframe
+
+
+def test_creating_a_plan_shows_the_locked_constraints_and_the_itinerary() -> None:
+    app = plan(start_app())
+
+    assert not app.exception
+    assert "itinerary" in app.session_state
+    labels = [metric.label for metric in app.metric]
+    assert "Wheelchair access" in labels
+    assert "Walking per leg" in labels
+    assert "Lunch starts by" in labels
+    assert "Finish by" in labels
+    assert "Total budget" in labels
+    assert len(app.dataframe) == 1
+
+
+def test_an_infeasible_request_stops_and_asks_instead_of_planning() -> None:
+    app = plan(start_app(), INFEASIBLE_PROMPT)
+
+    assert not app.exception
+    assert "itinerary" not in app.session_state
+    assert app.error, "an infeasible request must report that no safe plan exists"
+    assert not app.dataframe
+
+
+def test_rain_trigger_produces_a_validated_proposal() -> None:
+    app = click(plan(start_app()), "Simulate heavy rain + flood")
+
+    assert not app.exception
+    assert app.session_state["proposal"] is not None
+    assert app.session_state["proposal"].validation.valid
+
+
+def test_applying_a_proposal_advances_the_plan_and_clears_the_proposal() -> None:
+    app = click(plan(start_app()), "Simulate heavy rain + flood")
+    before = app.session_state["itinerary"]
+    proposed = app.session_state["proposal"].itinerary
+
+    applied = click(app, "Apply adjustment")
+
+    assert not applied.exception
+    assert applied.session_state["proposal"] is None
+    assert applied.session_state["itinerary"].id == proposed.id
+    assert applied.session_state["itinerary"].id != before.id
+
+
+def test_rejecting_a_proposal_keeps_the_current_plan() -> None:
+    app = click(plan(start_app()), "Simulate heavy rain + flood")
+    before = app.session_state["itinerary"]
+
+    kept = click(app, "Keep current plan")
+
+    assert not kept.exception
+    assert kept.session_state["proposal"] is None
+    assert kept.session_state["itinerary"].id == before.id
+
+
+def test_live_verification_failure_retains_the_current_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Safety rule 10: a monitoring failure must never disturb the accepted plan."""
+    app = plan(start_app())
+    before = app.session_state["itinerary"]
+
+    def explode(self: DemoEnvironmentClient) -> None:
+        raise ToolUnavailable("weather provider timed out")
+
+    monkeypatch.setattr(DemoEnvironmentClient, "current", explode)
+    checked = click(app, "Check live conditions")
+
+    assert not checked.exception
+    assert checked.session_state["itinerary"].id == before.id
+    assert checked.error, "a live-tool failure must be reported"
+
+
+def test_fatigue_trigger_requires_explicit_cost_approval() -> None:
+    """Safety rule 8: a material cost increase must present an approval decision."""
+    app = click(plan(start_app()), "Mum is more tired")
+
+    assert not app.exception
+    proposal = app.session_state["proposal"]
+    assert proposal.requires_approval
+    assert any("Approval required" in message.value for message in app.warning)
+    assert [button.label for button in app.button if "Approve" in button.label] == [
+        "Approve and apply"
+    ]
