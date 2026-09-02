@@ -52,7 +52,7 @@ def classify_freshness(
     return FreshnessStatus.FRESH
 
 
-def successful_result(
+def successful_result[T](
     payload: T,
     *,
     source: str,
@@ -66,9 +66,7 @@ def successful_result(
         payload=payload,
         source=source,
         source_timestamp=source_timestamp,
-        freshness=classify_freshness(
-            source_timestamp, kind, now=now, is_fixture=is_fixture
-        ),
+        freshness=classify_freshness(source_timestamp, kind, now=now, is_fixture=is_fixture),
         is_fixture=is_fixture,
     )
 

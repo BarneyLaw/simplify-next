@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Protocol, cast
+from typing import Any, ClassVar, Protocol, cast
 
 import httpx
 
@@ -19,7 +19,7 @@ class LocationClient(Protocol):
 class DemoLocationClient:
     """Deterministic origin lookup for the offline demo."""
 
-    _locations = {
+    _locations: ClassVar[dict[str, Location]] = {
         "toa payoh": Location(lat=1.3323, lng=103.8474),
         "city hall": Location(lat=1.2931, lng=103.8520),
     }

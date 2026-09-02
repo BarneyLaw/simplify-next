@@ -102,7 +102,9 @@ def test_validator_rejects_stale_route_data(
     stale_first = first.model_copy(
         update={"route": first.route.model_copy(update={"freshness": FreshnessStatus.STALE})}
     )
-    result = validator.validate(itinerary.model_copy(update={"segments": (stale_first, *itinerary.segments[1:])}))
+    result = validator.validate(
+        itinerary.model_copy(update={"segments": (stale_first, *itinerary.segments[1:])})
+    )
     assert ValidationCode.ROUTE_FRESHNESS in {issue.code for issue in result.issues}
 
 

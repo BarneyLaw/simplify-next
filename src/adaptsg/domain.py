@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from enum import StrEnum
-from typing import Generic, TypeVar
+from typing import TypeVar
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -73,7 +73,7 @@ class Location(StrictModel):
     lng: float = Field(ge=-180, le=180)
 
 
-class ToolResult(StrictModel, Generic[T]):
+class ToolResult[T](StrictModel):
     """Common provenance envelope for external and fixture tool responses."""
 
     success: bool

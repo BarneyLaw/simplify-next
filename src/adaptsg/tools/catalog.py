@@ -13,8 +13,8 @@ from adaptsg.domain import (
     AccessibilityStatus,
     ToolResult,
     Venue,
-    VenueSearchFilters,
     VenueCategory,
+    VenueSearchFilters,
 )
 from adaptsg.tools.freshness import FreshnessKind, successful_result
 
@@ -88,7 +88,10 @@ class VenueCatalog:
             venue
             for venue in self._venues
             if venue.id not in filters.excluded_ids
-            and (not filters.wheelchair_required or venue.accessibility_status is AccessibilityStatus.VERIFIED)
+            and (
+                not filters.wheelchair_required
+                or venue.accessibility_status is AccessibilityStatus.VERIFIED
+            )
             and (not filters.indoor_only or venue.indoor)
             and (not filters.categories or venue.category in filters.categories)
             and all(tag in venue.tags for tag in filters.tags)
@@ -112,7 +115,10 @@ class VenueCatalog:
                 issues.append(f"{venue.id}: coordinates are outside Singapore bounds")
             if venue.opening_time >= venue.closing_time:
                 issues.append(f"{venue.id}: opening hours are invalid")
-            if venue.accessibility_status is AccessibilityStatus.VERIFIED and not venue.accessibility_source:
+            if (
+                venue.accessibility_status is AccessibilityStatus.VERIFIED
+                and not venue.accessibility_source
+            ):
                 issues.append(f"{venue.id}: verified accessibility lacks a source")
             if venue.estimated_cost_sgd < 0:
                 issues.append(f"{venue.id}: cost cannot be negative")

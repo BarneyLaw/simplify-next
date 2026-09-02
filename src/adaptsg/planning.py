@@ -11,8 +11,6 @@ from adaptsg.domain import (
     ItineraryChange,
     ItinerarySegment,
     JourneyRequest,
-    Location,
-    Location,
     ReplanProposal,
     ReplanTrigger,
     SegmentPurpose,
@@ -360,9 +358,7 @@ class JourneyReplanner:
         return tuple(indices)
 
     @staticmethod
-    def _candidate_score(
-        before: Itinerary, after: Itinerary
-    ) -> tuple[object, ...]:
+    def _candidate_score(before: Itinerary, after: Itinerary) -> tuple[object, ...]:
         changed = 0
         retained = min(len(before.segments), len(after.segments))
         for index in range(retained):
@@ -375,7 +371,9 @@ class JourneyReplanner:
         preferred_ids = after.request.soft.preferred_venue_ids
         preferred_categories = after.request.soft.preferred_categories
         preference_penalty = sum(
-            0 if segment.venue.id in preferred_ids or segment.venue.category in preferred_categories else 1
+            0
+            if segment.venue.id in preferred_ids or segment.venue.category in preferred_categories
+            else 1
             for segment in after.segments
         )
         venue_ids = tuple(segment.venue.id for segment in after.segments)

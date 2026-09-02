@@ -7,7 +7,7 @@ from typing import Any, Protocol, cast
 
 import httpx
 
-from adaptsg.domain import EnvironmentSnapshot, ToolResult, Location, Venue
+from adaptsg.domain import EnvironmentSnapshot, Location, ToolResult, Venue
 from adaptsg.errors import ToolUnavailable
 from adaptsg.tools.catalog import VenueCatalog
 from adaptsg.tools.freshness import FreshnessKind, failed_result, successful_result

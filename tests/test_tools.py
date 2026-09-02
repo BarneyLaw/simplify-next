@@ -55,15 +55,11 @@ def test_catalog_lookup_and_filters() -> None:
 def test_freshness_policy_marks_stale_and_fixture_data() -> None:
     now = datetime(2026, 9, 2, 12, tzinfo=UTC)
     assert (
-        classify_freshness(
-            now - timedelta(minutes=16), FreshnessKind.ROUTE, now=now
-        )
+        classify_freshness(now - timedelta(minutes=16), FreshnessKind.ROUTE, now=now)
         is FreshnessStatus.STALE
     )
     assert (
-        classify_freshness(
-            now - timedelta(days=365), FreshnessKind.ROUTE, now=now, is_fixture=True
-        )
+        classify_freshness(now - timedelta(days=365), FreshnessKind.ROUTE, now=now, is_fixture=True)
         is FreshnessStatus.FIXTURE
     )
 
@@ -136,15 +132,18 @@ def test_demo_route_does_not_hide_walking_limit_violations() -> None:
         max_walking_distance_m=400,
     )
     assert far_route.walking_distance_m > 400
-    assert routing.route_result(
-        origin_label="A",
-        origin=ORIGIN,
-        destination_label="B",
-        destination=DESTINATION,
-        depart_at=START,
-        mode=TravelMode.WALK,
-        max_walking_distance_m=400,
-    ).freshness is FreshnessStatus.FIXTURE
+    assert (
+        routing.route_result(
+            origin_label="A",
+            origin=ORIGIN,
+            destination_label="B",
+            destination=DESTINATION,
+            depart_at=START,
+            mode=TravelMode.WALK,
+            max_walking_distance_m=400,
+        ).freshness
+        is FreshnessStatus.FIXTURE
+    )
 
 
 def test_distance_is_symmetric() -> None:
