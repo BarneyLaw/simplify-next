@@ -17,9 +17,7 @@ def calculate_plan_metrics(itinerary: Itinerary) -> PlanMetrics:
         SegmentMetrics(
             segment_id=segment.id,
             walking_distance_m=segment.route.walking_distance_m,
-            cost_sgd=round(
-                segment.venue.estimated_cost_sgd + segment.route.estimated_cost_sgd, 2
-            ),
+            cost_sgd=round(segment.venue.estimated_cost_sgd + segment.route.estimated_cost_sgd, 2),
         )
         for segment in itinerary.segments
     )
