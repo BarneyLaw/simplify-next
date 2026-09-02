@@ -40,6 +40,7 @@
   <header>
     <h1>AdaptSG</h1>
     <p class="lede">An inclusive journey-planning agent that preserves accessibility, health and budget constraints when conditions change.</p>
+    <p id="mode-badge" class="status">Checking data provenance...</p>
     <p id="runtime" class="status" role="status">Checking Python API...</p>
     <p id="alert" class="status warning" role="alert" hidden></p>
   </header>
@@ -78,6 +79,7 @@
 <script>
   const $ = (id) => document.getElementById(id);
   let itinerary = null;
+  let runtimeMode = 'demo';
   const tomorrow = new Date(Date.now() + 86400000);
   $('journey-date').value = tomorrow.toISOString().slice(0, 10);
 
@@ -97,6 +99,19 @@
   function setAlert(message) {
     $('alert').textContent = message;
     $('alert').hidden = false;
+  }
+  function modeBadge(mode) {
+    return mode === 'demo'
+      ? 'DEMO DATA - deterministic estimates, not live conditions'
+      : 'LIVE DATA - values retrieved from external providers';
+  }
+  function provenance(plan, mode) {
+    if (!plan.segments.length) return `No route values to attribute (${mode} mode).`;
+    const sources = [...new Set(plan.segments.map((s) => s.route.source))].join(', ');
+    const newest = new Date(Math.max(...plan.segments.map((s) => new Date(s.route.source_timestamp))));
+    const when = newest.toLocaleString('en-SG', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
+    const action = mode === 'demo' ? 'generated' : 'verified against providers';
+    return `Route values ${action} ${when} by ${sources} (${mode} mode).`;
   }
   function metric(label, value) { return `<div class="metric"><span>${safe(label)}</span><b>${safe(value)}</b></div>`; }
   function money(value) { return `S$${Number(value).toFixed(2)}`; }
@@ -118,7 +133,7 @@
       <td>${safe(segment.route.walking_distance_m)} m</td>
       <td>${safe(money(segment.route.estimated_cost_sgd + segment.venue.estimated_cost_sgd))}</td>
       <td>${safe(segment.venue.accessibility_status)}</td></tr>`).join('');
-    $('source').textContent = `Parser: ${plan.parser_source}. Route numbers: ${plan.segments.map(s=>s.route.source).join(', ')}.`;
+    $('source').textContent = `${provenance(plan, runtimeMode)} Constraint parser: ${plan.parser_source}.`;
     $('proposal').innerHTML = '';
   }
   function renderProposal(proposal) {
@@ -135,7 +150,7 @@
   }
   async function replan(trigger) {
     try { renderProposal(await api('/api/replan',{itinerary,trigger})); }
-    catch (error) { $('proposal').innerHTML = `<p class="status warning">${safe(error.message)} Current plan retained.</p>`; }
+    catch (error) { $('proposal').innerHTML = `<p class="status warning">${safe(error.message)} The current plan is retained unchanged; nothing was applied.</p>`; }
   }
 
   $('create').onclick = async () => {
@@ -144,11 +159,18 @@
       const outcome = await api('/api/plan',{prompt:$('prompt').value,journey_date:$('journey-date').value});
       renderPlan(outcome.itinerary);
       setStatus(outcome.warnings.length ? outcome.warnings.join(' ') : 'Plan validated successfully.');
-    } catch (error) { setAlert(error.message); }
+    } catch (error) {
+      setAlert(`No safe plan exists for this request: ${error.message.replace(/\.$/, '')}. AdaptSG did not weaken any `
+        + `accessibility, walking, timing or budget limit, and did not invent a route.`);
+    }
   };
   $('rain').onclick = () => replan({type:'flood_alert',message:'Heavy rain began and a flood alert affects the outdoor segment.',affected_venue_ids:itinerary.segments.filter(s=>!s.venue.indoor).map(s=>s.venue.id)});
   $('fatigue').onclick = () => replan({type:'fatigue',message:'Mum is more tired than expected; shorten travel and add rest.'});
-  api('/api/health').then(data => setStatus(`Python API ready (${data.mode} mode).`)).catch(error => setAlert(error.message));
+  api('/api/health').then(data => {
+    runtimeMode = data.mode;
+    $('mode-badge').textContent = modeBadge(data.mode);
+    setStatus(`Python API ready (${data.mode} mode).`);
+  }).catch(error => setAlert(error.message));
 </script>
 </body>
 </html>

@@ -88,6 +88,16 @@ for (const [element, inner] of markup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/bu
   require(Boolean(name), "every button needs a visible label or an aria-label");
 }
 
+// The two front ends must tell one provenance story. Both derive their wording from
+// adaptsg.presentation, so the badge text is compared directly rather than restated.
+const presentation = readFileSync("src/adaptsg/presentation.py", "utf8");
+for (const [, badge] of presentation.matchAll(/return "((?:DEMO|LIVE) DATA[^"]*)"/g)) {
+  require(
+    html.includes(badge),
+    `browser client is missing the provenance badge used by the Streamlit demo: "${badge}"`,
+  );
+}
+
 if (failures.length > 0) {
   throw new Error(`Accessibility gate failed:\n  - ${failures.join("\n  - ")}`);
 }

@@ -85,7 +85,7 @@ def render_itinerary(itinerary: Itinerary, mode: str) -> None:
 
 def render_no_feasible(message: str) -> None:
     """Safety rule 5: stop and ask instead of inventing a workaround."""
-    st.error(f"No safe plan exists for this request. {message}")
+    st.error(f"No safe plan exists for this request: {message.rstrip('.')}.")
     st.warning(
         "AdaptSG did not weaken any accessibility, walking, timing or budget limit to "
         "produce an alternative, and it did not invent a route. Adjust the request and "
