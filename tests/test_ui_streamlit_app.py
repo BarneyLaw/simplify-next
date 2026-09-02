@@ -139,3 +139,40 @@ def test_fatigue_trigger_requires_explicit_cost_approval() -> None:
     assert [button.label for button in app.button if "Approve" in button.label] == [
         "Approve and apply"
     ]
+
+
+def test_the_demo_never_presents_estimates_as_live_data() -> None:
+    """Safety rule 11: a demo estimate must not be captioned as live verification."""
+    app = plan(start_app())
+
+    captions = " ".join(caption.value for caption in app.caption).casefold()
+    assert "demo" in captions
+    assert "demo_route_estimator_v1" in captions
+    assert "verified" not in captions
+    assert any("DEMO DATA" in message.value for message in app.info)
+
+
+def test_the_no_feasible_panel_states_that_nothing_was_relaxed() -> None:
+    app = plan(start_app(), INFEASIBLE_PROMPT)
+
+    errors = " ".join(message.value for message in app.error)
+    warnings = " ".join(message.value for message in app.warning)
+    assert "No safe plan exists" in errors
+    assert "did not weaken" in warnings
+    assert "did not invent a route" in warnings
+
+
+def test_a_live_tool_failure_says_the_plan_is_retained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = plan(start_app())
+
+    def explode(self: DemoEnvironmentClient) -> None:
+        raise ToolUnavailable("weather provider timed out")
+
+    monkeypatch.setattr(DemoEnvironmentClient, "current", explode)
+    checked = click(app, "Check live conditions")
+
+    errors = " ".join(message.value for message in checked.error)
+    assert "Live verification failed" in errors
+    assert "retained unchanged" in errors

@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from adaptsg.domain import Itinerary, ItinerarySegment, TravelMode
-from adaptsg.presentation import itinerary_rows, retained_segment_percentage
+from adaptsg.presentation import (
+    itinerary_rows,
+    latest_route_timestamp,
+    mode_badge,
+    provenance_label,
+    retained_segment_percentage,
+    route_sources,
+)
 
 
 def with_segments(itinerary: Itinerary, segments: tuple[ItinerarySegment, ...]) -> Itinerary:
@@ -84,3 +91,46 @@ def test_itinerary_rows_round_combined_route_and_venue_cost(itinerary: Itinerary
 
 def test_itinerary_rows_are_empty_without_segments(itinerary: Itinerary) -> None:
     assert itinerary_rows(with_segments(itinerary, ())) == []
+
+
+def test_latest_route_timestamp_is_absent_without_segments(itinerary: Itinerary) -> None:
+    """render_itinerary previously called max() directly and would raise here."""
+    assert latest_route_timestamp(with_segments(itinerary, ())) is None
+    assert latest_route_timestamp(itinerary) == max(
+        segment.route.source_timestamp for segment in itinerary.segments
+    )
+
+
+def test_route_sources_are_deduplicated_in_first_seen_order(itinerary: Itinerary) -> None:
+    assert route_sources(itinerary) == ("demo_route_estimator_v1",)
+    assert route_sources(with_segments(itinerary, ())) == ()
+
+
+def test_demo_provenance_is_generated_and_never_claims_verification(
+    itinerary: Itinerary,
+) -> None:
+    label = provenance_label(itinerary, mode="demo")
+
+    assert "generated" in label
+    assert "verified" not in label
+    assert "demo_route_estimator_v1" in label
+    assert "(demo mode)" in label
+
+
+def test_live_provenance_attributes_values_to_providers(itinerary: Itinerary) -> None:
+    label = provenance_label(itinerary, mode="live")
+
+    assert "verified against providers" in label
+    assert "(live mode)" in label
+
+
+def test_provenance_label_handles_a_plan_without_route_values(itinerary: Itinerary) -> None:
+    assert provenance_label(with_segments(itinerary, ()), mode="demo") == (
+        "No route values to attribute (demo mode)."
+    )
+
+
+def test_mode_badge_distinguishes_demo_estimates_from_live_values() -> None:
+    assert "DEMO DATA" in mode_badge("demo")
+    assert "not live conditions" in mode_badge("demo")
+    assert "LIVE DATA" in mode_badge("live")
