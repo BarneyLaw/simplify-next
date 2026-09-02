@@ -1,0 +1,20 @@
+{
+  "normal": {
+    "weather_summary": "Fair",
+    "psi": 42,
+    "flood_affected_venue_ids": [],
+    "disrupted_route_labels": []
+  },
+  "heavy_rain": {
+    "weather_summary": "Thundery Showers",
+    "psi": 42,
+    "flood_affected_venue_ids": ["gardens-bay-outdoor"],
+    "disrupted_route_labels": []
+  },
+  "high_psi": {
+    "weather_summary": "Fair",
+    "psi": 120,
+    "flood_affected_venue_ids": [],
+    "disrupted_route_labels": []
+  }
+}
