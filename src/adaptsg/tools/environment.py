@@ -74,11 +74,13 @@ class LiveEnvironmentClient:
         self.catalog = catalog
         self.lta_account_key = lta_account_key
         self.data_gov_api_key = data_gov_api_key
-        self.client = client or httpx.Client(timeout=8)
+        self.client = client
 
     def current(self) -> EnvironmentSnapshot:
         if not self.lta_account_key:
             raise ToolUnavailable("LTA_ACCOUNT_KEY is required for live flood verification")
+        if self.client is None:
+            self.client = httpx.Client(timeout=8)
         try:
             weather = self._get(self.weather_url, self._data_headers())
             psi = self._get(self.psi_url, self._data_headers())
@@ -89,7 +91,7 @@ class LiveEnvironmentClient:
             weather_summary = str(weather_record["general"]["forecast"]["text"])
             psi_regions = cast(dict[str, Any], psi_item["readings"]["psi_twenty_four_hourly"])
             psi_value = max(int(value) for value in psi_regions.values())
-            observed_at = min(
+            observed_at = max(
                 datetime.fromisoformat(str(weather_record["updatedTimestamp"])),
                 datetime.fromisoformat(str(psi_item["updatedTimestamp"])),
             )

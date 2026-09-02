@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from itertools import product
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -44,17 +45,41 @@ class JourneyPlanner:
 
     def create(self, request: JourneyRequest, *, parser_source: str = "deterministic") -> Itinerary:
         venues = self._select_initial_venues(request)
-        itinerary = self._schedule(
-            request=request,
-            venues=venues,
-            purposes=self._purposes_for(venues),
-            parser_source=parser_source,
+        purposes = self._purposes_for(venues)
+        candidates = (
+            self._schedule(
+                request=request,
+                venues=venues,
+                purposes=purposes,
+                parser_source=parser_source,
+                modes=modes,
+            )
+            for modes in product(
+                (TravelMode.PUBLIC_TRANSPORT, TravelMode.TAXI),
+                repeat=len(venues),
+            )
         )
-        result = self.validator.validate(itinerary)
-        if not result.valid:
-            messages = "; ".join(issue.message for issue in result.issues)
+        feasible = [
+            itinerary for itinerary in candidates if self.validator.validate(itinerary).valid
+        ]
+        if not feasible:
+            itinerary = self._schedule(
+                request=request,
+                venues=venues,
+                purposes=purposes,
+                parser_source=parser_source,
+            )
+            messages = "; ".join(
+                issue.message for issue in self.validator.validate(itinerary).issues
+            )
             raise NoFeasibleItinerary(f"no safe initial itinerary: {messages}")
-        return itinerary
+        return min(
+            feasible,
+            key=lambda itinerary: (
+                sum(segment.route.mode is TravelMode.TAXI for segment in itinerary.segments),
+                itinerary.total_cost_sgd,
+            ),
+        )
 
     def _select_initial_venues(self, request: JourneyRequest) -> tuple[Venue, ...]:
         required = [

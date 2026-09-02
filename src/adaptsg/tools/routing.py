@@ -119,7 +119,7 @@ class OneMapRoutingClient:
     ) -> None:
         self.token = token
         self.bfa_enabled = bfa_enabled
-        self.client = client or httpx.Client(timeout=8)
+        self.client = client
 
     def route(
         self,
@@ -134,6 +134,8 @@ class OneMapRoutingClient:
     ) -> RouteLeg:
         if not self.token:
             raise ToolUnavailable("ONEMAP_API_TOKEN is required in live mode")
+        if self.client is None:
+            self.client = httpx.Client(timeout=8)
         use_bfa = self.bfa_enabled and mode is TravelMode.WALK
         path = "/api/bfa/routingsvc/route" if use_bfa else "/api/public/routingsvc/route"
         params = {
