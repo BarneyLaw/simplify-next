@@ -22,6 +22,7 @@ from adaptsg.errors import (
     ToolUnavailable,
 )
 from adaptsg.presentation import (
+    environment_provenance_label,
     itinerary_rows,
     mode_badge,
     provenance_label,
@@ -92,12 +93,11 @@ def render_no_feasible(message: str) -> None:
     )
 
 
-def render_monitoring(monitoring: MonitoringOutcome) -> None:
+def render_monitoring(monitoring: MonitoringOutcome, mode: str) -> None:
     snapshot = monitoring.snapshot
     st.info(
         f"Conditions: {snapshot.weather_summary}; 24-hour PSI {snapshot.psi}. "
-        f"Observed {snapshot.observed_at.astimezone().strftime('%d %b %H:%M %Z')} "
-        f"via {snapshot.source}."
+        f"{environment_provenance_label(snapshot, mode=mode)}"
     )
     if monitoring.triggers:
         for trigger in monitoring.triggers:
@@ -262,7 +262,7 @@ def main() -> None:
 
     monitoring_value = state_value("monitoring")
     if isinstance(monitoring_value, MonitoringOutcome):
-        render_monitoring(monitoring_value)
+        render_monitoring(monitoring_value, mode)
     proposal_value = state_value("proposal")
     if isinstance(proposal_value, ReplanProposal):
         render_proposal(itinerary_value, proposal_value)

@@ -196,3 +196,15 @@ def test_exhausting_the_replan_budget_is_reported_as_its_own_state() -> None:
     errors = " ".join(message.value for message in exhausted.error)
     assert "Replanning is bounded" in errors
     assert exhausted.session_state["itinerary"].replan_count == 2
+
+
+def test_a_monitored_demo_run_never_captions_the_snapshot_as_observed() -> None:
+    """Safety rule 11: the conditions snapshot is generated in demo mode, not observed."""
+    app = click(plan(start_app()), "Check live conditions")
+
+    assert not app.exception
+    conditions = [message.value for message in app.info if "Conditions:" in message.value]
+    assert conditions, "a monitored run must report the conditions snapshot"
+    assert all("Observed" not in message for message in conditions)
+    assert all("Generated " in message for message in conditions)
+    assert all("via demo_environment_snapshot_v1." in message for message in conditions)

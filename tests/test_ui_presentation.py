@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from adaptsg.domain import Itinerary, ItinerarySegment, TravelMode
+from datetime import UTC, datetime
+
+from adaptsg.domain import EnvironmentSnapshot, Itinerary, ItinerarySegment, TravelMode
 from adaptsg.presentation import (
+    environment_provenance_label,
     itinerary_rows,
     latest_route_timestamp,
     mode_badge,
@@ -134,3 +137,36 @@ def test_mode_badge_distinguishes_demo_estimates_from_live_values() -> None:
     assert "DEMO DATA" in mode_badge("demo")
     assert "not live conditions" in mode_badge("demo")
     assert "LIVE DATA" in mode_badge("live")
+
+
+def snapshot(source: str = "demo_environment_snapshot_v1") -> EnvironmentSnapshot:
+    return EnvironmentSnapshot(
+        weather_summary="Fair",
+        psi=42,
+        observed_at=datetime(2026, 9, 2, 4, 30, tzinfo=UTC),
+        source=source,
+    )
+
+
+def test_a_demo_snapshot_is_generated_and_never_claims_observation() -> None:
+    """The demo client stamps observed_at with generation time, not an observation."""
+    label = environment_provenance_label(snapshot(), mode="demo")
+
+    assert label.startswith("Generated ")
+    assert "Observed" not in label
+    assert "demo_environment_snapshot_v1" in label
+
+
+def test_a_live_snapshot_is_reported_as_observed() -> None:
+    label = environment_provenance_label(snapshot("data_gov_sg_v2"), mode="live")
+
+    assert label.startswith("Observed ")
+    assert "data_gov_sg_v2" in label
+
+
+def test_environment_provenance_keeps_the_source_string_verbatim() -> None:
+    """Presentation attributes the snapshot; it never rewrites the tool's own label."""
+    for mode in ("demo", "live"):
+        assert environment_provenance_label(snapshot("lta_pub_alerts_v1"), mode=mode).endswith(
+            "via lta_pub_alerts_v1."
+        )

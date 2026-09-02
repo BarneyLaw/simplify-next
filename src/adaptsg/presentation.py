@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from adaptsg.domain import Itinerary
+from adaptsg.domain import EnvironmentSnapshot, Itinerary
 
 DEMO_MODE = "demo"
 
@@ -73,6 +73,18 @@ def provenance_label(itinerary: Itinerary, *, mode: str) -> str:
     origin = ", ".join(route_sources(itinerary))
     action = "generated" if mode == DEMO_MODE else "verified against providers"
     return f"Route values {action} {when} by {origin} ({mode} mode)."
+
+
+def environment_provenance_label(snapshot: EnvironmentSnapshot, *, mode: str) -> str:
+    """Attribute a conditions snapshot to its source without implying it was observed.
+
+    The demo client stamps ``observed_at`` with generation time, so captioning it
+    "observed" would present a deterministic estimate as a reading taken from the
+    world. Live snapshots come from providers and are genuinely observations.
+    """
+    when = snapshot.observed_at.astimezone().strftime("%d %b %H:%M %Z")
+    action = "Generated" if mode == DEMO_MODE else "Observed"
+    return f"{action} {when} via {snapshot.source}."
 
 
 def mode_badge(mode: str) -> str:
