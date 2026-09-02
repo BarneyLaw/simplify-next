@@ -8,8 +8,9 @@ from typing import Any, Protocol, cast
 
 import httpx
 
-from adaptsg.domain import Location, RouteLeg, TravelMode
+from adaptsg.domain import Location, RouteLeg, ToolResult, TravelMode
 from adaptsg.errors import ToolUnavailable
+from adaptsg.tools.freshness import FreshnessKind, failed_result, successful_result
 
 
 class RoutingClient(Protocol):
@@ -59,11 +60,11 @@ class DemoRoutingClient:
             duration = max(5, ceil(direct_distance / 55))
             cost = 0.0
         elif mode is TravelMode.TAXI:
-            walking_distance = min(80, max_walking_distance_m)
+            walking_distance = 80
             duration = max(8, ceil(direct_distance / 500) + 5)
             cost = round(4.8 + direct_distance / 1_000 * 1.25, 2)
         else:
-            walking_distance = min(max_walking_distance_m, max(120, ceil(direct_distance * 0.08)))
+            walking_distance = max(120, ceil(direct_distance * 0.08))
             duration = max(12, ceil(direct_distance / 350) + 8)
             cost = 2.0
 
@@ -81,6 +82,26 @@ class DemoRoutingClient:
             estimated_cost_sgd=cost,
             source=self.source,
             source_timestamp=datetime.now(UTC),
+            is_fixture=True,
+            freshness="fixture",
+        )
+
+    def route_result(self, **kwargs: Any) -> ToolResult[RouteLeg]:
+        try:
+            route = self.route(**kwargs)
+        except ToolUnavailable as exc:
+            return failed_result(
+                source=self.source,
+                error_code="route_unavailable",
+                error_message=str(exc),
+                kind=FreshnessKind.ROUTE,
+            )
+        return successful_result(
+            route,
+            source=route.source,
+            source_timestamp=route.source_timestamp,
+            kind=FreshnessKind.ROUTE,
+            is_fixture=True,
         )
 
 
@@ -149,6 +170,25 @@ class OneMapRoutingClient:
             estimated_cost_sgd=cost,
             source=f"{source}+transport_cost_policy_v1",
             source_timestamp=datetime.now(UTC),
+            freshness="fresh",
+            is_fixture=False,
+        )
+
+    def route_result(self, **kwargs: Any) -> ToolResult[RouteLeg]:
+        try:
+            route = self.route(**kwargs)
+        except ToolUnavailable as exc:
+            return failed_result(
+                source="onemap",
+                error_code="route_unavailable",
+                error_message=str(exc),
+                kind=FreshnessKind.ROUTE,
+            )
+        return successful_result(
+            route,
+            source=route.source,
+            source_timestamp=route.source_timestamp,
+            kind=FreshnessKind.ROUTE,
         )
 
     @staticmethod
@@ -178,10 +218,12 @@ class OneMapRoutingClient:
                 raise ValueError("OneMap PT response lacked first/last-mile walking distance")
             return duration, distance, walking
 
+        if mode is TravelMode.PUBLIC_TRANSPORT:
+            raise ValueError("OneMap PT response lacked first/last-mile walking distance")
         summary = cast(dict[str, Any], payload["route_summary"])
         duration = int(float(summary["total_time"]))
         distance = int(float(summary["total_distance"]))
-        walking = distance if mode is TravelMode.WALK else min(80, distance)
+        walking = distance if mode is TravelMode.WALK else 0
         return duration, distance, walking
 
     @staticmethod

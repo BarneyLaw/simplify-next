@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from enum import StrEnum
+from typing import Generic, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+T = TypeVar("T")
 
 
 class StrictModel(BaseModel):
@@ -58,9 +61,47 @@ class ProposalStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class FreshnessStatus(StrEnum):
+    FRESH = "fresh"
+    STALE = "stale"
+    FIXTURE = "fixture"
+    UNAVAILABLE = "unavailable"
+
+
 class Location(StrictModel):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
+
+
+class ToolResult(StrictModel, Generic[T]):
+    """Common provenance envelope for external and fixture tool responses."""
+
+    success: bool
+    payload: T | None = None
+    source: str
+    source_timestamp: datetime
+    freshness: FreshnessStatus
+    is_fixture: bool = False
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class LocationSearchResult(StrictModel):
+    label: str
+    location: Location
+    source: str
+    source_timestamp: datetime
+    freshness: FreshnessStatus = FreshnessStatus.FRESH
+    is_fixture: bool = False
+
+
+class AccessibilityResult(StrictModel):
+    location: Location
+    status: AccessibilityStatus
+    source: str | None = None
+    source_timestamp: datetime
+    freshness: FreshnessStatus = FreshnessStatus.FRESH
+    is_fixture: bool = False
 
 
 class Venue(StrictModel):
@@ -76,6 +117,16 @@ class Venue(StrictModel):
     rest_seating: bool
     opening_time: time
     closing_time: time
+    tags: tuple[str, ...] = ()
+    data_source: str = "curated_demo_dataset"
+    data_reviewed_on: date | None = None
+
+
+class VenueSearchFilters(StrictModel):
+    wheelchair_required: bool = True
+    indoor_only: bool = False
+    categories: tuple[VenueCategory, ...] = ()
+    excluded_ids: frozenset[str] = frozenset()
     tags: tuple[str, ...] = ()
 
 
@@ -139,6 +190,8 @@ class RouteLeg(StrictModel):
     estimated_cost_sgd: float = Field(ge=0)
     source: str
     source_timestamp: datetime
+    freshness: FreshnessStatus = FreshnessStatus.FRESH
+    is_fixture: bool = False
 
     @model_validator(mode="after")
     def timestamps_match_duration(self) -> RouteLeg:
@@ -176,6 +229,19 @@ class Itinerary(StrictModel):
     parser_source: str = "deterministic"
 
 
+class SegmentMetrics(StrictModel):
+    segment_id: UUID
+    walking_distance_m: int = Field(ge=0)
+    cost_sgd: float = Field(ge=0)
+
+
+class PlanMetrics(StrictModel):
+    total_cost_sgd: float = Field(ge=0)
+    total_walking_distance_m: int = Field(ge=0)
+    elapsed_minutes: int = Field(ge=0)
+    segments: tuple[SegmentMetrics, ...] = ()
+
+
 class PlanOutcome(StrictModel):
     itinerary: Itinerary
     warnings: tuple[str, ...] = ()
@@ -189,6 +255,8 @@ class EnvironmentSnapshot(StrictModel):
     disrupted_route_labels: frozenset[str] = frozenset()
     observed_at: datetime
     source: str
+    freshness: FreshnessStatus = FreshnessStatus.FRESH
+    is_fixture: bool = False
 
 
 class ReplanTrigger(StrictModel):
@@ -218,6 +286,7 @@ class ValidationCode(StrEnum):
     STOP_LIMIT = "stop_limit"
     FINISH_TIME = "finish_time"
     COST_CALCULATION = "cost_calculation"
+    ROUTE_FRESHNESS = "route_freshness"
 
 
 class ValidationIssue(StrictModel):
