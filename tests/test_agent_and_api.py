@@ -1,14 +1,17 @@
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import adaptsg.web_api as web_api
 from adaptsg.agent import AdaptSGService
 from adaptsg.domain import (
     Itinerary,
     JourneyRequest,
+    JourneyState,
+    JourneyStatus,
     MonitoringOutcome,
     ParseOutcome,
     ReplanTrigger,
@@ -49,6 +52,30 @@ def make_service(
         replanner=replanner,
         environment=environment or DemoEnvironmentClient(),
     )
+
+
+def test_journey_state_rejects_invalid_lifecycle(itinerary: Itinerary) -> None:
+    now = datetime.now(UTC)
+    with pytest.raises(ValidationError, match="pending initial itinerary"):
+        JourneyState(
+            status=JourneyStatus.DRAFT,
+            current_itinerary=itinerary,
+            created_at=now,
+            updated_at=now,
+            expires_at=now + timedelta(hours=24),
+        )
+
+
+def test_journey_state_requires_aware_ordered_timestamps(itinerary: Itinerary) -> None:
+    now = datetime.now(UTC)
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        JourneyState(
+            status=JourneyStatus.DRAFT,
+            pending_initial_itinerary=itinerary,
+            created_at=now.replace(tzinfo=None),
+            updated_at=now,
+            expires_at=now + timedelta(hours=24),
+        )
 
 
 def test_service_runs_bounded_plan_graph(

@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from datetime import date, time
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -76,6 +76,14 @@ class ConstraintExtraction(StrictModel):
 class DeterministicPreferenceParser:
     """Conservative extraction for CI and credential-free demonstrations."""
 
+    VENUE_ALIASES: ClassVar[dict[str, str]] = {
+        "gardens by the bay": "gardens-bay-outdoor",
+        "national gallery": "national-gallery",
+        "artscience": "artscience-museum",
+        "botanic gardens": "botanic-gardens",
+        "national museum": "national-museum",
+    }
+
     def __init__(self, catalog: VenueCatalog) -> None:
         self.catalog = catalog
 
@@ -120,24 +128,26 @@ class DeterministicPreferenceParser:
         )
 
     def _mentioned_venue_ids(self, lowered: str) -> frozenset[str]:
-        aliases = {
-            "gardens by the bay": "gardens-bay-outdoor",
-            "national gallery": "national-gallery",
-            "artscience": "artscience-museum",
-            "botanic gardens": "botanic-gardens",
-            "national museum": "national-museum",
-        }
-        found = {venue_id for alias, venue_id in aliases.items() if alias in lowered}
+        found = {venue_id for alias, venue_id in self.VENUE_ALIASES.items() if alias in lowered}
         found.update(venue.id for venue in self.catalog.all() if venue.name.casefold() in lowered)
         return frozenset(found)
 
     def _required_venue_ids(self, lowered: str) -> frozenset[str]:
         required = set()
+        mandatory = r"(?:must(?:\s+visit)?|required|cannot\s+miss)"
         for venue_id in self._mentioned_venue_ids(lowered):
             venue = self.catalog.get(venue_id)
-            aliases = (venue.name.casefold(), venue_id.replace("-", " "))
+            aliases = (
+                venue.name.casefold(),
+                venue_id.replace("-", " "),
+                *(alias for alias, target in self.VENUE_ALIASES.items() if target == venue_id),
+            )
             for alias in aliases:
-                pattern = rf"(?:must|required|cannot miss)[^.]*{re.escape(alias)}"
+                escaped_alias = re.escape(alias)
+                pattern = (
+                    rf"(?:{mandatory})[^.!?]{{0,80}}{escaped_alias}"
+                    rf"|{escaped_alias}[^.!?]{{0,80}}(?:is\s+)?{mandatory}"
+                )
                 if re.search(pattern, lowered):
                     required.add(venue_id)
         return frozenset(required)
@@ -267,6 +277,9 @@ class BedrockPreferenceParser:
         return (
             "Extract travel constraints as one JSON object matching the supplied schema. "
             "Never diagnose health conditions. Fatigue only affects walking and rest needs. "
+            "A venue mention or wording such as 'would like to visit' is a soft preference. "
+            "Put a venue in required_venue_ids only when the user explicitly says must, "
+            "required, or cannot miss; otherwise put it in preferred_venue_ids. "
             "Do not invent venue ids; required_venue_ids may contain only these ids: "
             f"{venue_ids}. Use conservative defaults for omitted fields. Schema: {schema}"
         )
