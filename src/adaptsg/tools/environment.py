@@ -129,7 +129,10 @@ class LiveEnvironmentClient:
         )
 
     def _get(self, url: str, headers: dict[str, str]) -> dict[str, Any]:
-        response = self.client.get(url, headers=headers)
+        client = self.client
+        if client is None:
+            raise ToolUnavailable("live environment client is unavailable")
+        response = client.get(url, headers=headers)
         response.raise_for_status()
         return cast(dict[str, Any], response.json())
 
