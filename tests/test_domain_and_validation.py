@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from adaptsg.domain import (
     AccessibilityStatus,
+    FreshnessStatus,
     HardConstraints,
     Itinerary,
     ItinerarySegment,
@@ -92,6 +93,17 @@ def test_validator_reports_safety_and_provenance_violations(
         ValidationCode.OPENING_HOURS,
         ValidationCode.COST_CALCULATION,
     } <= codes
+
+
+def test_validator_rejects_stale_route_data(
+    itinerary: Itinerary, validator: ItineraryValidator
+) -> None:
+    first = itinerary.segments[0]
+    stale_first = first.model_copy(
+        update={"route": first.route.model_copy(update={"freshness": FreshnessStatus.STALE})}
+    )
+    result = validator.validate(itinerary.model_copy(update={"segments": (stale_first, *itinerary.segments[1:])}))
+    assert ValidationCode.ROUTE_FRESHNESS in {issue.code for issue in result.issues}
 
 
 def test_validator_reports_global_constraint_violations(
