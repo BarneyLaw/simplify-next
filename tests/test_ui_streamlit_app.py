@@ -176,3 +176,23 @@ def test_a_live_tool_failure_says_the_plan_is_retained(
     errors = " ".join(message.value for message in checked.error)
     assert "Live verification failed" in errors
     assert "retained unchanged" in errors
+
+
+def test_exhausting_the_replan_budget_is_reported_as_its_own_state() -> None:
+    """Safety rule 9: replanning is bounded, and hitting the cap is not a generic failure."""
+    app = plan(start_app())
+    for step in (
+        "Simulate heavy rain + flood",
+        "Apply adjustment",
+        "Mum is more tired",
+        "Approve and apply",
+    ):
+        app = click(app, step)
+
+    assert app.session_state["itinerary"].replan_count == 2
+    exhausted = click(app, "Simulate heavy rain + flood")
+
+    assert exhausted.session_state["proposal"] is None
+    errors = " ".join(message.value for message in exhausted.error)
+    assert "Replanning is bounded" in errors
+    assert exhausted.session_state["itinerary"].replan_count == 2
