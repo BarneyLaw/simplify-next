@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import cast
 
 import streamlit as st
 
@@ -204,13 +203,10 @@ def main() -> None:
         height=150,
         key="prompt",
     )
-    journey_date = cast(
-        date,
-        st.date_input(
-            "Journey date",
-            value=date.today() + timedelta(days=1),
-            key="journey-date",
-        ),
+    journey_date = st.date_input(
+        "Journey date",
+        value=date.today() + timedelta(days=1),
+        key="journey-date",
     )
     if st.button("Create safe plan", type="primary", key="create-plan"):
         try:
