@@ -7,9 +7,10 @@ from typing import Any, Protocol, cast
 
 import httpx
 
-from adaptsg.domain import EnvironmentSnapshot, Location, Venue
+from adaptsg.domain import EnvironmentSnapshot, ToolResult, Location, Venue
 from adaptsg.errors import ToolUnavailable
 from adaptsg.tools.catalog import VenueCatalog
+from adaptsg.tools.freshness import FreshnessKind, failed_result, successful_result
 from adaptsg.tools.routing import distance_metres
 
 
@@ -39,6 +40,18 @@ class DemoEnvironmentClient:
             disrupted_route_labels=self._disruptions,
             observed_at=datetime.now(UTC),
             source="demo_environment_snapshot_v1",
+            freshness="fixture",
+            is_fixture=True,
+        )
+
+    def current_result(self) -> ToolResult[EnvironmentSnapshot]:
+        snapshot = self.current()
+        return successful_result(
+            snapshot,
+            source=snapshot.source,
+            source_timestamp=snapshot.observed_at,
+            kind=FreshnessKind.WEATHER,
+            is_fixture=True,
         )
 
 
@@ -76,7 +89,7 @@ class LiveEnvironmentClient:
             weather_summary = str(weather_record["general"]["forecast"]["text"])
             psi_regions = cast(dict[str, Any], psi_item["readings"]["psi_twenty_four_hourly"])
             psi_value = max(int(value) for value in psi_regions.values())
-            observed_at = max(
+            observed_at = min(
                 datetime.fromisoformat(str(weather_record["updatedTimestamp"])),
                 datetime.fromisoformat(str(psi_item["updatedTimestamp"])),
             )
@@ -92,6 +105,25 @@ class LiveEnvironmentClient:
             disrupted_route_labels=disruptions,
             observed_at=observed_at,
             source="data.gov.sg_weather_psi+lta_pub_flood_train",
+            freshness="fresh",
+            is_fixture=False,
+        )
+
+    def current_result(self) -> ToolResult[EnvironmentSnapshot]:
+        try:
+            snapshot = self.current()
+        except ToolUnavailable as exc:
+            return failed_result(
+                source="data.gov.sg+lta_pub",
+                error_code="environment_unavailable",
+                error_message=str(exc),
+                kind=FreshnessKind.WEATHER,
+            )
+        return successful_result(
+            snapshot,
+            source=snapshot.source,
+            source_timestamp=snapshot.observed_at,
+            kind=FreshnessKind.WEATHER,
         )
 
     def _get(self, url: str, headers: dict[str, str]) -> dict[str, Any]:
