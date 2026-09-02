@@ -18,7 +18,9 @@
     textarea { min-height:130px; }
     button { background:var(--teal); color:white; border:0; border-radius:8px; padding:.75rem 1rem; font-weight:700; cursor:pointer; margin:.4rem .35rem .4rem 0; }
     button.secondary { background:#334155; }
-    button:focus { outline:3px solid #fbbf24; outline-offset:2px; }
+    :is(button,textarea,input,a):focus-visible { outline:3px solid var(--ink); outline-offset:2px; }
+    .skip { position:absolute; left:-9999px; background:var(--ink); color:white; padding:.6rem 1rem; border-radius:0 0 8px 0; z-index:10; }
+    .skip:focus { left:0; top:0; }
     .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:.8rem; }
     .metric { background:var(--pale); border-radius:10px; padding:.8rem; }
     .metric b { display:block; font-size:1.35rem; }
@@ -28,16 +30,19 @@
     .table-wrap { overflow-x:auto; }
     .status { border-left:5px solid var(--teal); padding:.75rem 1rem; background:var(--pale); }
     .warning { border-left-color:#d97706; color:var(--warn); background:#fffbeb; }
-    .hidden { display:none; }
+    [hidden] { display:none !important; }
     footer { margin-top:3rem; color:#475569; }
   </style>
 </head>
 <body>
-<main>
+<a class="skip" href="#plan-title">Skip to the planning form</a>
+<main id="main">
   <header>
     <h1>AdaptSG</h1>
     <p class="lede">An inclusive journey-planning agent that preserves accessibility, health and budget constraints when conditions change.</p>
+    <p id="mode-badge" class="status">Checking data provenance...</p>
     <p id="runtime" class="status" role="status">Checking Python API...</p>
+    <p id="alert" class="status warning" role="alert" hidden></p>
   </header>
 
   <section class="card" aria-labelledby="plan-title">
@@ -49,14 +54,15 @@
     <button id="create">Create safe plan</button>
   </section>
 
-  <section id="result" class="hidden" aria-live="polite">
+  <section id="result" hidden>
     <h2>Locked constraints</h2>
     <div id="constraints" class="grid"></div>
     <div class="card">
       <h2>Current safe itinerary</h2>
       <div id="summary" class="grid"></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Time</th><th>Stop</th><th>Transport</th><th>Walk</th><th>Cost</th><th>Access</th></tr></thead>
+        <caption>Timed stops with transport, walking distance, cost and verified accessibility status.</caption>
+        <thead><tr><th scope="col">Time</th><th scope="col">Stop</th><th scope="col">Transport</th><th scope="col">Walk</th><th scope="col">Cost</th><th scope="col">Access</th></tr></thead>
         <tbody id="segments"></tbody>
       </table></div>
       <p id="source"></p>
@@ -65,7 +71,7 @@
       <h2>Five-minute demo events</h2>
       <button id="rain">Heavy rain + flood</button>
       <button id="fatigue">Mum is more tired</button>
-      <div id="proposal"></div>
+      <div id="proposal" aria-live="polite"></div>
     </div>
   </section>
   <footer>The LLM proposes. Deterministic code validates. No booking, payment or medical diagnosis tools are present.</footer>
@@ -73,6 +79,7 @@
 <script>
   const $ = (id) => document.getElementById(id);
   let itinerary = null;
+  let runtimeMode = 'demo';
   const tomorrow = new Date(Date.now() + 86400000);
   $('journey-date').value = tomorrow.toISOString().slice(0, 10);
 
@@ -85,6 +92,27 @@
     if (!response.ok) throw new Error(payload.detail || 'Request failed');
     return payload;
   }
+  function setStatus(message) {
+    $('runtime').textContent = message;
+    $('alert').hidden = true;
+  }
+  function setAlert(message) {
+    $('alert').textContent = message;
+    $('alert').hidden = false;
+  }
+  function modeBadge(mode) {
+    return mode === 'demo'
+      ? 'DEMO DATA - deterministic estimates, not live conditions'
+      : 'LIVE DATA - values retrieved from external providers';
+  }
+  function provenance(plan, mode) {
+    if (!plan.segments.length) return `No route values to attribute (${mode} mode).`;
+    const sources = [...new Set(plan.segments.map((s) => s.route.source))].join(', ');
+    const newest = new Date(Math.max(...plan.segments.map((s) => new Date(s.route.source_timestamp))));
+    const when = newest.toLocaleString('en-SG', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
+    const action = mode === 'demo' ? 'generated' : 'verified against providers';
+    return `Route values ${action} ${when} by ${sources} (${mode} mode).`;
+  }
   function metric(label, value) { return `<div class="metric"><span>${safe(label)}</span><b>${safe(value)}</b></div>`; }
   function money(value) { return `S$${Number(value).toFixed(2)}`; }
   function clock(value) { return new Date(value).toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit',hour12:false}); }
@@ -92,7 +120,7 @@
   function renderPlan(plan) {
     itinerary = plan;
     const hard = plan.request.hard;
-    $('result').classList.remove('hidden');
+    $('result').hidden = false;
     $('constraints').innerHTML = [
       metric('Wheelchair access','Verified only'), metric('Walking per leg',`<= ${hard.max_walking_distance_m} m`),
       metric('Lunch by',hard.lunch_latest.slice(0,5)), metric('Finish by',hard.finish_by.slice(0,5)),
@@ -105,36 +133,44 @@
       <td>${safe(segment.route.walking_distance_m)} m</td>
       <td>${safe(money(segment.route.estimated_cost_sgd + segment.venue.estimated_cost_sgd))}</td>
       <td>${safe(segment.venue.accessibility_status)}</td></tr>`).join('');
-    $('source').textContent = `Parser: ${plan.parser_source}. Route numbers: ${plan.segments.map(s=>s.route.source).join(', ')}.`;
+    $('source').textContent = `${provenance(plan, runtimeMode)} Constraint parser: ${plan.parser_source}.`;
     $('proposal').innerHTML = '';
   }
   function renderProposal(proposal) {
     const changed = proposal.changes.map(change => `<p><b>Stop ${change.segment_index + 1}</b>: ${safe(change.before)} -> ${safe(change.after)}<br><small>${safe(change.reason)}</small></p>`).join('');
     $('proposal').innerHTML = `<div class="status ${proposal.requires_approval ? 'warning' : ''}">
-      <h3>Proposed smallest safe adjustment</h3>${changed || '<p>No change required.</p>'}
+      <h3 id="proposal-title" tabindex="-1">Proposed smallest safe adjustment</h3>${changed || '<p>No change required.</p>'}
       <p><b>Cost change:</b> ${safe(money(proposal.cost_delta_sgd))}; <b>validation:</b> ${proposal.validation.valid ? 'PASS' : 'FAIL'}</p>
       ${proposal.requires_approval ? '<p>Caregiver approval is required because the cost threshold is exceeded.</p>' : ''}
       <button id="apply">${proposal.requires_approval ? 'Approve and apply' : 'Apply adjustment'}</button>
       <button id="reject" class="secondary">Keep current plan</button></div>`;
     $('apply').onclick = () => renderPlan(proposal.itinerary);
-    $('reject').onclick = () => { $('proposal').innerHTML = ''; };
+    $('reject').onclick = () => { $('proposal').innerHTML = ''; $('rain').focus(); };
+    $('proposal-title').focus();
   }
   async function replan(trigger) {
     try { renderProposal(await api('/api/replan',{itinerary,trigger})); }
-    catch (error) { $('proposal').innerHTML = `<p class="status warning">${safe(error.message)} Current plan retained.</p>`; }
+    catch (error) { $('proposal').innerHTML = `<p class="status warning">${safe(error.message)} The current plan is retained unchanged; nothing was applied.</p>`; }
   }
 
   $('create').onclick = async () => {
-    $('runtime').textContent = 'Planning and validating...';
+    setStatus('Planning and validating...');
     try {
       const outcome = await api('/api/plan',{prompt:$('prompt').value,journey_date:$('journey-date').value});
       renderPlan(outcome.itinerary);
-      $('runtime').textContent = outcome.warnings.length ? outcome.warnings.join(' ') : 'Plan validated successfully.';
-    } catch (error) { $('runtime').textContent = error.message; $('runtime').classList.add('warning'); }
+      setStatus(outcome.warnings.length ? outcome.warnings.join(' ') : 'Plan validated successfully.');
+    } catch (error) {
+      setAlert(`No safe plan exists for this request: ${error.message.replace(/\.$/, '')}. AdaptSG did not weaken any `
+        + `accessibility, walking, timing or budget limit, and did not invent a route.`);
+    }
   };
   $('rain').onclick = () => replan({type:'flood_alert',message:'Heavy rain began and a flood alert affects the outdoor segment.',affected_venue_ids:itinerary.segments.filter(s=>!s.venue.indoor).map(s=>s.venue.id)});
   $('fatigue').onclick = () => replan({type:'fatigue',message:'Mum is more tired than expected; shorten travel and add rest.'});
-  api('/api/health').then(data => {$('runtime').textContent=`Python API ready (${data.mode} mode).`;}).catch(error => {$('runtime').textContent=error.message;$('runtime').classList.add('warning');});
+  api('/api/health').then(data => {
+    runtimeMode = data.mode;
+    $('mode-badge').textContent = modeBadge(data.mode);
+    setStatus(`Python API ready (${data.mode} mode).`);
+  }).catch(error => setAlert(error.message));
 </script>
 </body>
 </html>

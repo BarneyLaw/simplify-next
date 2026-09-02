@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import cast
 
 import streamlit as st
 
@@ -16,8 +15,19 @@ from adaptsg.domain import (
     ReplanTrigger,
     TriggerType,
 )
-from adaptsg.errors import AdaptSGError
-from adaptsg.presentation import itinerary_rows, retained_segment_percentage
+from adaptsg.errors import (
+    AdaptSGError,
+    NoFeasibleItinerary,
+    ReplanLimitReached,
+    ToolUnavailable,
+)
+from adaptsg.presentation import (
+    environment_provenance_label,
+    itinerary_rows,
+    mode_badge,
+    provenance_label,
+    retained_segment_percentage,
+)
 from adaptsg.settings import get_settings
 
 SAMPLE_PROMPT = (
@@ -52,7 +62,7 @@ def render_constraints(itinerary: Itinerary) -> None:
     )
 
 
-def render_itinerary(itinerary: Itinerary) -> None:
+def render_itinerary(itinerary: Itinerary, mode: str) -> None:
     st.subheader("Current safe itinerary")
     left, middle, right = st.columns(3)
     left.metric("Total cost", f"S${itinerary.total_cost_sgd:.2f}")
@@ -68,19 +78,26 @@ def render_itinerary(itinerary: Itinerary) -> None:
             "route_source": st.column_config.TextColumn("Route source"),
         },
     )
-    freshest = max(segment.route.source_timestamp for segment in itinerary.segments)
     st.caption(
-        f"Route values last verified {freshest.astimezone().strftime('%d %b %Y %H:%M %Z')}. "
-        f"Constraint parser: {itinerary.parser_source}."
+        f"{provenance_label(itinerary, mode=mode)} Constraint parser: {itinerary.parser_source}."
     )
 
 
-def render_monitoring(monitoring: MonitoringOutcome) -> None:
+def render_no_feasible(message: str) -> None:
+    """Safety rule 5: stop and ask instead of inventing a workaround."""
+    st.error(f"No safe plan exists for this request: {message.rstrip('.')}.")
+    st.warning(
+        "AdaptSG did not weaken any accessibility, walking, timing or budget limit to "
+        "produce an alternative, and it did not invent a route. Adjust the request and "
+        "plan again, or continue with the current plan if one is already accepted."
+    )
+
+
+def render_monitoring(monitoring: MonitoringOutcome, mode: str) -> None:
     snapshot = monitoring.snapshot
     st.info(
         f"Conditions: {snapshot.weather_summary}; 24-hour PSI {snapshot.psi}. "
-        f"Observed {snapshot.observed_at.astimezone().strftime('%d %b %H:%M %Z')} "
-        f"via {snapshot.source}."
+        f"{environment_provenance_label(snapshot, mode=mode)}"
     )
     if monitoring.triggers:
         for trigger in monitoring.triggers:
@@ -117,12 +134,14 @@ def render_proposal(before: Itinerary, proposal: ReplanProposal) -> None:
         "Approve and apply" if proposal.requires_approval else "Apply adjustment",
         type="primary",
         use_container_width=True,
+        key="apply-proposal",
     ):
+        # Clicking this button is the caregiver decision the approval boundary requires.
         st.session_state.itinerary = service().apply_proposal(proposal, approved=True)
         st.session_state.proposal = None
         st.session_state.monitoring = None
         st.rerun()
-    if reject_col.button("Keep current plan", use_container_width=True):
+    if reject_col.button("Keep current plan", use_container_width=True, key="reject-proposal"):
         st.session_state.proposal = None
         st.rerun()
 
@@ -130,8 +149,27 @@ def render_proposal(before: Itinerary, proposal: ReplanProposal) -> None:
 def propose(trigger: ReplanTrigger, itinerary: Itinerary) -> None:
     try:
         st.session_state.proposal = service().propose_replan(itinerary, trigger)
+    except ReplanLimitReached as exc:
+        st.session_state.proposal = None
+        st.error(f"Replanning is bounded and this journey has reached its limit. {exc}")
+    except NoFeasibleItinerary as exc:
+        st.session_state.proposal = None
+        render_no_feasible(str(exc))
     except AdaptSGError as exc:
-        st.error(str(exc))
+        st.session_state.proposal = None
+        st.error(f"No adjustment was applied; the current plan is retained. {exc}")
+
+
+def check_conditions(itinerary: Itinerary) -> None:
+    try:
+        st.session_state.monitoring = service().monitor(itinerary)
+    except ToolUnavailable as exc:
+        st.error(
+            f"Live verification failed, so the current plan is retained unchanged. {exc} "
+            "No condition below has been refreshed."
+        )
+    except AdaptSGError as exc:
+        st.error(f"Monitoring failed; the current plan is retained unchanged. {exc}")
 
 
 def main() -> None:
@@ -142,35 +180,45 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     settings = get_settings()
+    mode = settings.adaptsg_mode
     st.title("AdaptSG")
     st.markdown(
         "**Inclusive journey planning that preserves accessibility, health and budget limits "
         "when conditions change.**"
     )
+    st.info(mode_badge(mode))
 
     with st.sidebar:
         st.header("Runtime")
-        st.write(f"Mode: **{settings.adaptsg_mode.upper()}**")
-        if settings.adaptsg_mode == "demo":
+        st.write(f"Mode: **{mode.upper()}**")
+        if mode == "demo":
             st.info("Offline demo data is deterministic and labelled. No live claim is implied.")
         st.header("Non-negotiable policy")
         st.write("The LLM proposes. Deterministic code validates.")
         st.write("No bookings, payments, diagnosis, or silent constraint relaxation.")
 
-    prompt = st.text_area("Describe the day and constraints", value=SAMPLE_PROMPT, height=150)
-    journey_date = cast(
-        date,
-        st.date_input("Journey date", value=date.today() + timedelta(days=1)),
+    prompt = st.text_area(
+        "Describe the day and constraints",
+        value=SAMPLE_PROMPT,
+        height=150,
+        key="prompt",
     )
-    if st.button("Create safe plan", type="primary"):
+    journey_date = st.date_input(
+        "Journey date",
+        value=date.today() + timedelta(days=1),
+        key="journey-date",
+    )
+    if st.button("Create safe plan", type="primary", key="create-plan"):
         try:
             outcome = service().create_plan(prompt, journey_date=journey_date)
             st.session_state.plan_outcome = outcome
             st.session_state.itinerary = outcome.itinerary
             st.session_state.proposal = None
             st.session_state.monitoring = None
+        except NoFeasibleItinerary as exc:
+            render_no_feasible(str(exc))
         except AdaptSGError as exc:
-            st.error(str(exc))
+            st.error(f"The plan could not be created. {exc}")
 
     outcome_value = state_value("plan_outcome")
     itinerary_value = state_value("itinerary")
@@ -181,16 +229,17 @@ def main() -> None:
     for warning in outcome_value.warnings:
         st.warning(warning)
     render_constraints(itinerary_value)
-    render_itinerary(itinerary_value)
+    render_itinerary(itinerary_value, mode)
 
     st.subheader("Monitor and adapt")
     monitor_col, rain_col, fatigue_col = st.columns(3)
-    if monitor_col.button("Check live conditions", use_container_width=True):
-        try:
-            st.session_state.monitoring = service().monitor(itinerary_value)
-        except AdaptSGError as exc:
-            st.error(f"Live verification failed; current plan retained. {exc}")
-    if rain_col.button("Simulate heavy rain + flood", use_container_width=True):
+    if monitor_col.button(
+        "Check live conditions", use_container_width=True, key="check-conditions"
+    ):
+        check_conditions(itinerary_value)
+    if rain_col.button(
+        "Simulate heavy rain + flood", use_container_width=True, key="simulate-rain"
+    ):
         outdoor_ids = frozenset(
             segment.venue.id for segment in itinerary_value.segments if not segment.venue.indoor
         )
@@ -202,7 +251,7 @@ def main() -> None:
             ),
             itinerary_value,
         )
-    if fatigue_col.button("Mum is more tired", use_container_width=True):
+    if fatigue_col.button("Mum is more tired", use_container_width=True, key="simulate-fatigue"):
         propose(
             ReplanTrigger(
                 type=TriggerType.FATIGUE,
@@ -213,7 +262,7 @@ def main() -> None:
 
     monitoring_value = state_value("monitoring")
     if isinstance(monitoring_value, MonitoringOutcome):
-        render_monitoring(monitoring_value)
+        render_monitoring(monitoring_value, mode)
     proposal_value = state_value("proposal")
     if isinstance(proposal_value, ReplanProposal):
         render_proposal(itinerary_value, proposal_value)
