@@ -1,0 +1,32 @@
+{
+  "normal_public_transport": {
+    "plan": {
+      "itineraries": [
+        {
+          "duration": 900,
+          "legs": [
+            {"mode": "WALK", "distance": 120},
+            {"mode": "BUS", "distance": 2800},
+            {"mode": "WALK", "distance": 80}
+          ]
+        }
+      ]
+    }
+  },
+  "over_limit_public_transport": {
+    "plan": {
+      "itineraries": [
+        {
+          "duration": 1800,
+          "legs": [
+            {"mode": "WALK", "distance": 401},
+            {"mode": "BUS", "distance": 3200}
+          ]
+        }
+      ]
+    }
+  },
+  "normal_drive": {
+    "route_summary": {"total_time": 600, "total_distance": 3200}
+  }
+}

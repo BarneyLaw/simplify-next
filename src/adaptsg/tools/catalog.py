@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from importlib.resources import files
 
 from pydantic import TypeAdapter
 
-from adaptsg.domain import AccessibilityStatus, Venue, VenueCategory
+from adaptsg.domain import (
+    AccessibilityResult,
+    AccessibilityStatus,
+    ToolResult,
+    Venue,
+    VenueCategory,
+    VenueSearchFilters,
+)
+from adaptsg.tools.freshness import FreshnessKind, successful_result
 
 
 class VenueCatalog:
@@ -28,6 +37,27 @@ class VenueCatalog:
             return self._by_id[venue_id]
         except KeyError as exc:
             raise KeyError(f"unknown venue: {venue_id}") from exc
+
+    def get_accessibility(self, venue_id: str) -> AccessibilityResult:
+        venue = self.get(venue_id)
+        return AccessibilityResult(
+            location=venue.location,
+            status=venue.accessibility_status,
+            source=venue.accessibility_source,
+            source_timestamp=datetime.now(UTC),
+            freshness="fixture",
+            is_fixture=True,
+        )
+
+    def get_accessibility_result(self, venue_id: str) -> ToolResult[AccessibilityResult]:
+        evidence = self.get_accessibility(venue_id)
+        return successful_result(
+            evidence,
+            source=evidence.source or "curated_demo_dataset",
+            source_timestamp=evidence.source_timestamp,
+            kind=FreshnessKind.VENUE,
+            is_fixture=True,
+        )
 
     def eligible(
         self,
@@ -52,3 +82,44 @@ class VenueCatalog:
                 continue
             eligible.append(venue)
         return tuple(eligible)
+
+    def search(self, filters: VenueSearchFilters) -> tuple[Venue, ...]:
+        return tuple(
+            venue
+            for venue in self._venues
+            if venue.id not in filters.excluded_ids
+            and (
+                not filters.wheelchair_required
+                or venue.accessibility_status is AccessibilityStatus.VERIFIED
+            )
+            and (not filters.indoor_only or venue.indoor)
+            and (not filters.categories or venue.category in filters.categories)
+            and all(tag in venue.tags for tag in filters.tags)
+        )
+
+    def search_result(self, filters: VenueSearchFilters) -> ToolResult[tuple[Venue, ...]]:
+        timestamp = datetime.now(UTC)
+        return successful_result(
+            self.search(filters),
+            source="curated_demo_dataset",
+            source_timestamp=timestamp,
+            kind=FreshnessKind.VENUE,
+            is_fixture=True,
+        )
+
+    def audit(self) -> tuple[str, ...]:
+        """Return data-quality issues without silently correcting curated claims."""
+        issues: list[str] = []
+        for venue in self._venues:
+            if not 1.1 <= venue.location.lat <= 1.5 or not 103.5 <= venue.location.lng <= 104.2:
+                issues.append(f"{venue.id}: coordinates are outside Singapore bounds")
+            if venue.opening_time >= venue.closing_time:
+                issues.append(f"{venue.id}: opening hours are invalid")
+            if (
+                venue.accessibility_status is AccessibilityStatus.VERIFIED
+                and not venue.accessibility_source
+            ):
+                issues.append(f"{venue.id}: verified accessibility lacks a source")
+            if venue.estimated_cost_sgd < 0:
+                issues.append(f"{venue.id}: cost cannot be negative")
+        return tuple(issues)

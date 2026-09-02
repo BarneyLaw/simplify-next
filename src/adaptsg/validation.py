@@ -8,12 +8,14 @@ from zoneinfo import ZoneInfo
 
 from adaptsg.domain import (
     AccessibilityStatus,
+    FreshnessStatus,
     Itinerary,
     SegmentPurpose,
     ValidationCode,
     ValidationIssue,
     ValidationResult,
 )
+from adaptsg.tools.metrics import calculate_plan_metrics
 
 SINGAPORE = ZoneInfo("Asia/Singapore")
 
@@ -42,7 +44,6 @@ class ItineraryValidator:
                 )
             )
 
-        computed_cost = 0.0
         visited: set[str] = set()
         lunch_seen = False
         previous_end = self._at_local_time(request.journey_date, request.start_time)
@@ -54,8 +55,6 @@ class ItineraryValidator:
             venue = segment.venue
             route = segment.route
             visited.add(venue.id)
-            computed_cost += venue.estimated_cost_sgd + route.estimated_cost_sgd
-
             if hard.wheelchair_accessible_required and (
                 venue.accessibility_status is not AccessibilityStatus.VERIFIED
                 or not venue.accessibility_source
@@ -85,6 +84,18 @@ class ItineraryValidator:
                     ValidationIssue(
                         code=ValidationCode.ROUTE_PROVENANCE,
                         message=f"route to {venue.name} lacks tool provenance",
+                        segment_id=segment.id,
+                    )
+                )
+
+            if route.freshness in {
+                FreshnessStatus.STALE,
+                FreshnessStatus.UNAVAILABLE,
+            }:
+                issues.append(
+                    ValidationIssue(
+                        code=ValidationCode.ROUTE_FRESHNESS,
+                        message=f"route to {venue.name} has {route.freshness.value} data",
                         segment_id=segment.id,
                     )
                 )
@@ -176,6 +187,7 @@ class ItineraryValidator:
                 )
             )
 
+        computed_cost = calculate_plan_metrics(itinerary).total_cost_sgd
         if computed_cost > hard.total_budget_sgd:
             issues.append(
                 ValidationIssue(

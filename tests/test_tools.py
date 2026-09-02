@@ -1,13 +1,24 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
 
-from adaptsg.domain import Location, TravelMode, VenueCategory
+from adaptsg.domain import (
+    AccessibilityStatus,
+    FreshnessStatus,
+    Itinerary,
+    Location,
+    TravelMode,
+    VenueCategory,
+    VenueSearchFilters,
+)
 from adaptsg.errors import ToolUnavailable
 from adaptsg.tools.catalog import VenueCatalog
 from adaptsg.tools.environment import DemoEnvironmentClient, LiveEnvironmentClient
+from adaptsg.tools.freshness import FreshnessKind, classify_freshness
+from adaptsg.tools.location import DemoLocationClient, OneMapLocationClient
+from adaptsg.tools.metrics import calculate_plan_metrics
 from adaptsg.tools.routing import DemoRoutingClient, OneMapRoutingClient, distance_metres
 
 SGT = ZoneInfo("Asia/Singapore")
@@ -30,6 +41,45 @@ def test_catalog_lookup_and_filters() -> None:
     )
     assert indoor
     assert all(venue.indoor and venue.id != "national-gallery" for venue in indoor)
+    assert catalog.audit() == ()
+    evidence = catalog.get_accessibility("national-gallery")
+    assert evidence.status is AccessibilityStatus.VERIFIED
+    assert evidence.source == "curated_demo_dataset"
+    result = catalog.search_result(
+        VenueSearchFilters(indoor_only=True, categories=(VenueCategory.FOOD,))
+    )
+    assert result.success and result.is_fixture
+    assert result.payload and all(venue.indoor for venue in result.payload)
+
+
+def test_freshness_policy_marks_stale_and_fixture_data() -> None:
+    now = datetime(2026, 9, 2, 12, tzinfo=UTC)
+    assert (
+        classify_freshness(now - timedelta(minutes=16), FreshnessKind.ROUTE, now=now)
+        is FreshnessStatus.STALE
+    )
+    assert (
+        classify_freshness(now - timedelta(days=365), FreshnessKind.ROUTE, now=now, is_fixture=True)
+        is FreshnessStatus.FIXTURE
+    )
+
+
+def test_demo_location_lookup_is_typed_and_bounded() -> None:
+    result = DemoLocationClient().search_result("Toa Payoh")
+    assert result.success and result.freshness is FreshnessStatus.FIXTURE
+    assert result.payload and result.payload[0].location == Location(lat=1.3323, lng=103.8474)
+    assert DemoLocationClient().search(" ") == ()
+
+
+def test_onemap_location_search_rejects_malformed_response() -> None:
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json={"results": [{"SEARCHVAL": "bad"}]})
+        )
+    )
+    result = OneMapLocationClient(token="test", client=client).search_result("bad")
+    assert not result.success
+    assert result.error_code == "location_unavailable"
 
 
 @pytest.mark.parametrize(
@@ -49,6 +99,51 @@ def test_demo_routes_are_deterministic(mode: TravelMode, expected_cost: float) -
     assert route.estimated_cost_sgd == expected_cost
     assert route.source == "demo_route_estimator_v1"
     assert route.arrive_at > route.depart_at
+
+
+def test_demo_route_does_not_hide_walking_limit_violations() -> None:
+    routing = DemoRoutingClient()
+    short_limit = routing.route(
+        origin_label="A",
+        origin=ORIGIN,
+        destination_label="B",
+        destination=DESTINATION,
+        depart_at=START,
+        mode=TravelMode.PUBLIC_TRANSPORT,
+        max_walking_distance_m=100,
+    )
+    generous_limit = routing.route(
+        origin_label="A",
+        origin=ORIGIN,
+        destination_label="B",
+        destination=DESTINATION,
+        depart_at=START,
+        mode=TravelMode.PUBLIC_TRANSPORT,
+        max_walking_distance_m=400,
+    )
+    assert short_limit.walking_distance_m == generous_limit.walking_distance_m
+    far_route = routing.route(
+        origin_label="A",
+        origin=ORIGIN,
+        destination_label="Far away",
+        destination=Location(lat=1.35, lng=103.90),
+        depart_at=START,
+        mode=TravelMode.PUBLIC_TRANSPORT,
+        max_walking_distance_m=400,
+    )
+    assert far_route.walking_distance_m > 400
+    assert (
+        routing.route_result(
+            origin_label="A",
+            origin=ORIGIN,
+            destination_label="B",
+            destination=DESTINATION,
+            depart_at=START,
+            mode=TravelMode.WALK,
+            max_walking_distance_m=400,
+        ).freshness
+        is FreshnessStatus.FIXTURE
+    )
 
 
 def test_distance_is_symmetric() -> None:
@@ -138,6 +233,32 @@ def test_onemap_public_transport_parses_walking_legs() -> None:
     assert route.duration_minutes == 15
     assert route.walking_distance_m == 200
     assert route.estimated_cost_sgd == 2
+
+
+def test_onemap_public_transport_rejects_summary_without_walking_legs() -> None:
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200, json={"route_summary": {"total_time": 600, "total_distance": 500}}
+            )
+        )
+    )
+    with pytest.raises(ToolUnavailable, match="walking distance"):
+        OneMapRoutingClient(token="test", client=client).route(
+            origin_label="A",
+            origin=ORIGIN,
+            destination_label="B",
+            destination=DESTINATION,
+            depart_at=START,
+            mode=TravelMode.PUBLIC_TRANSPORT,
+            max_walking_distance_m=400,
+        )
+
+
+def test_plan_metrics_are_typed_and_reconcile_cost(itinerary: Itinerary) -> None:
+    metrics = calculate_plan_metrics(itinerary)
+    assert metrics.total_cost_sgd == itinerary.total_cost_sgd
+    assert len(metrics.segments) == len(itinerary.segments)
 
 
 @pytest.mark.parametrize(

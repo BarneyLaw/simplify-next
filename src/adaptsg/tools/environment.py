@@ -7,9 +7,10 @@ from typing import Any, Protocol, cast
 
 import httpx
 
-from adaptsg.domain import EnvironmentSnapshot, Location, Venue
+from adaptsg.domain import EnvironmentSnapshot, Location, ToolResult, Venue
 from adaptsg.errors import ToolUnavailable
 from adaptsg.tools.catalog import VenueCatalog
+from adaptsg.tools.freshness import FreshnessKind, failed_result, successful_result
 from adaptsg.tools.routing import distance_metres
 
 
@@ -39,6 +40,18 @@ class DemoEnvironmentClient:
             disrupted_route_labels=self._disruptions,
             observed_at=datetime.now(UTC),
             source="demo_environment_snapshot_v1",
+            freshness="fixture",
+            is_fixture=True,
+        )
+
+    def current_result(self) -> ToolResult[EnvironmentSnapshot]:
+        snapshot = self.current()
+        return successful_result(
+            snapshot,
+            source=snapshot.source,
+            source_timestamp=snapshot.observed_at,
+            kind=FreshnessKind.WEATHER,
+            is_fixture=True,
         )
 
 
@@ -61,11 +74,13 @@ class LiveEnvironmentClient:
         self.catalog = catalog
         self.lta_account_key = lta_account_key
         self.data_gov_api_key = data_gov_api_key
-        self.client = client or httpx.Client(timeout=8)
+        self.client = client
 
     def current(self) -> EnvironmentSnapshot:
         if not self.lta_account_key:
             raise ToolUnavailable("LTA_ACCOUNT_KEY is required for live flood verification")
+        if self.client is None:
+            self.client = httpx.Client(timeout=8)
         try:
             weather = self._get(self.weather_url, self._data_headers())
             psi = self._get(self.psi_url, self._data_headers())
@@ -92,10 +107,32 @@ class LiveEnvironmentClient:
             disrupted_route_labels=disruptions,
             observed_at=observed_at,
             source="data.gov.sg_weather_psi+lta_pub_flood_train",
+            freshness="fresh",
+            is_fixture=False,
+        )
+
+    def current_result(self) -> ToolResult[EnvironmentSnapshot]:
+        try:
+            snapshot = self.current()
+        except ToolUnavailable as exc:
+            return failed_result(
+                source="data.gov.sg+lta_pub",
+                error_code="environment_unavailable",
+                error_message=str(exc),
+                kind=FreshnessKind.WEATHER,
+            )
+        return successful_result(
+            snapshot,
+            source=snapshot.source,
+            source_timestamp=snapshot.observed_at,
+            kind=FreshnessKind.WEATHER,
         )
 
     def _get(self, url: str, headers: dict[str, str]) -> dict[str, Any]:
-        response = self.client.get(url, headers=headers)
+        client = self.client
+        if client is None:
+            raise ToolUnavailable("live environment client is unavailable")
+        response = client.get(url, headers=headers)
         response.raise_for_status()
         return cast(dict[str, Any], response.json())
 
