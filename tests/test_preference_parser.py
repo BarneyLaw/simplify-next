@@ -61,6 +61,16 @@ def test_gardens_is_required_only_with_explicit_language(wording: str) -> None:
     assert outcome.request.soft.preferred_venue_ids == frozenset()
 
 
+def test_required_language_for_another_venue_does_not_promote_gardens() -> None:
+    parser = DeterministicPreferenceParser(VenueCatalog())
+    outcome = parser.parse(
+        "We would like Gardens by the Bay and must visit National Gallery.",
+        journey_date=date(2026, 9, 2),
+    )
+    assert outcome.request.hard.required_venue_ids == frozenset({"national-gallery"})
+    assert outcome.request.soft.preferred_venue_ids == frozenset({"gardens-bay-outdoor"})
+
+
 def test_deterministic_parser_uses_conservative_defaults() -> None:
     parser = DeterministicPreferenceParser(VenueCatalog())
     outcome = parser.parse("A quiet local day", journey_date=date(2026, 9, 2))

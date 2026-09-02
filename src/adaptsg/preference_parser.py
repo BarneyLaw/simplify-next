@@ -146,7 +146,7 @@ class DeterministicPreferenceParser:
                 escaped_alias = re.escape(alias)
                 pattern = (
                     rf"(?:{mandatory})[^.!?]{{0,80}}{escaped_alias}"
-                    rf"|{escaped_alias}[^.!?]{{0,80}}(?:is\s+)?{mandatory}"
+                    rf"|{escaped_alias}\s+(?:is\s+)?(?:required|a\s+must(?:-see)?)"
                 )
                 if re.search(pattern, lowered):
                     required.add(venue_id)
