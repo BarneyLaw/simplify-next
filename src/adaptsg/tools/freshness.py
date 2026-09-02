@@ -71,14 +71,14 @@ def successful_result[T](
     )
 
 
-def failed_result(
+def failed_result[T](
     *,
     source: str,
     error_code: str,
     error_message: str,
     kind: FreshnessKind,
     source_timestamp: datetime | None = None,
-) -> ToolResult[None]:
+) -> ToolResult[T]:
     timestamp = source_timestamp or datetime.now(UTC)
     return ToolResult(
         success=False,

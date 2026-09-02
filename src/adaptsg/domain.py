@@ -4,12 +4,9 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from enum import StrEnum
-from typing import TypeVar
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-T = TypeVar("T")
 
 
 class StrictModel(BaseModel):
