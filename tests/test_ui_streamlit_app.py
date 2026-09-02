@@ -208,3 +208,17 @@ def test_a_monitored_demo_run_never_captions_the_snapshot_as_observed() -> None:
     assert all("Observed" not in message for message in conditions)
     assert all("Generated " in message for message in conditions)
     assert all("via demo_environment_snapshot_v1." in message for message in conditions)
+
+
+def test_every_interactive_widget_renders_a_non_empty_accessible_name() -> None:
+    """The Streamlit counterpart of the button-name check in scripts/check_web.mjs.
+
+    Streamlit derives a widget's accessible name from its label, so a blank or
+    collapsed label leaves a screen-reader user with an unnamed control.
+    """
+    app = click(plan(start_app()), "Simulate heavy rain + flood")
+
+    widgets = [*app.button, *app.text_area, *app.date_input]
+    assert len(widgets) >= 8, "the planning and adaptation controls must all be rendered"
+    unnamed = [type(widget).__name__ for widget in widgets if not (widget.label or "").strip()]
+    assert not unnamed, f"widgets without an accessible name: {unnamed}"
