@@ -90,6 +90,65 @@ for (const [element, inner] of markup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/bu
 
 // The two front ends must tell one provenance story. Both derive their wording from
 // adaptsg.presentation, so the badge text is compared directly rather than restated.
+// Contract gates. The journey API is stateful: the server owns the itinerary, every
+// mutation is keyed, and a transport fault is not a safety verdict. A syntax check cannot
+// see any of that, which is how the client once drifted a whole contract behind the routes.
+
+require(
+  (script.match(/fetch\(/g) ?? []).length === 1,
+  "every request must go through the single fetch helper, or a call site can skip its headers",
+);
+
+require(
+  (script.match(/['"]POST['"]/g) ?? []).length === 1,
+  "POSTs must be issued only by the mutate helper",
+);
+
+require(
+  /['"]Idempotency-Key['"]\]?\s*=/.test(script),
+  "the request helper must set the Idempotency-Key header the API requires",
+);
+
+require(
+  /function mutate\([^)]*idempotencyKey[^)]*\)\s*\{\s*\n\s*if \(!idempotencyKey\) throw/.test(script),
+  "mutate must refuse to send a state-changing request without an idempotency key",
+);
+
+require(
+  /crypto\.randomUUID\(\)/.test(script),
+  "idempotency keys must be unique per action so a retry replays instead of reapplying",
+);
+
+require(
+  !/\bitinerary\s*:/.test(script),
+  "the client must never send an itinerary; it holds a journey id and a version",
+);
+
+require(
+  /expected_version/.test(script),
+  "mutations must carry expected_version so a stale plan is rejected rather than overwritten",
+);
+
+require(
+  /payload\.code/.test(script),
+  "the typed error code must reach the client; detail alone cannot distinguish domain states",
+);
+
+const SAFETY_COPY = "did not weaken";
+const safetyUses = (script.match(new RegExp(SAFETY_COPY, "g")) ?? []).length;
+require(
+  safetyUses === 1,
+  `the stop-and-ask copy ("${SAFETY_COPY}") must appear once, for one error code only`,
+);
+if (safetyUses === 1) {
+  const preceding = script.slice(0, script.indexOf(SAFETY_COPY));
+  const owner = [...preceding.matchAll(/(\w+):\s*\(/g)].at(-1)?.[1];
+  require(
+    owner === "no_feasible_itinerary",
+    `only no_feasible_itinerary may claim nothing was relaxed; "${SAFETY_COPY}" sits under ${owner}`,
+  );
+}
+
 const presentation = readFileSync("src/adaptsg/presentation.py", "utf8");
 for (const [, badge] of presentation.matchAll(/return "((?:DEMO|LIVE) DATA[^"]*)"/g)) {
   require(
