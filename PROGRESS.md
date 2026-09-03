@@ -1,6 +1,6 @@
 # AdaptSG Progress
 
-Last updated: 2026-09-01 (Asia/Singapore)
+Last updated: 2026-09-03 (Asia/Singapore)
 
 ## Current status
 
@@ -18,6 +18,9 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 - [x] Added a bounded LangGraph planning flow.
 - [x] Added deterministic validation for accessibility, walking, time, lunch, rest, budget, opening hours, provenance and loop limits.
 - [x] Added minimal-change replanning and caregiver cost approval.
+- [x] Added server-owned journey lifecycle routes with draft approval, monitoring, replanning and version conflicts.
+- [x] Added deterministic in-memory demo storage and a DynamoDB JSON/TTL storage adapter.
+- [x] Added idempotency-key replay for journey creation, decisions and replans.
 - [x] Added the full Streamlit demo and lightweight Vercel web mode.
 - [x] Added Docker, Vercel and AWS SAM deployment files.
 - [x] Added 71 tests, including 20 named evaluation scenarios.
@@ -32,16 +35,16 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 
 | Check | Result | Evidence |
 |---|---:|---|
-| Tests | 71 passed | `python -m pytest` |
+| Tests | 117 passed | `PATH=.venv/bin:$PATH ./scripts/check.sh` |
 | Named scenarios | 20 passed | `tests/test_evaluation_scenarios.py` |
-| Branch coverage | 98.1% | CI threshold is 90% |
+| Branch coverage | 94.19% | CI threshold is 90% |
 | Ruff format/lint | Passed | `scripts/check.ps1` |
 | Strict mypy | Passed | 25 source/test modules checked |
 | Bandit | Passed | Source, API and Streamlit entry point |
 | Dependency audit | Passed | No known vulnerabilities after minimum-version update |
 | Streamlit headless flow | Passed | Initial plan, rain proposal, apply and fatigue approval |
 | FastAPI plan/replan | Passed | Local `TestClient` integration |
-| Vercel browser JS syntax | Passed | `scripts/check_web.mjs` |
+| Vercel browser JS syntax | Passed | `scripts/check_web.mjs`; lifecycle client uses server-owned journey routes |
 | Live provider parsers | Passed with mocks | Bedrock, OneMap, data.gov.sg, LTA/PUB |
 | Docker image build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
 | SAM validate/build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
@@ -98,7 +101,7 @@ Priority 1:
 - [ ] Build the maximum 10-slide presentation.
 - [ ] Record/caption the maximum five-minute demo video.
 - [ ] Add structured CloudWatch metrics for latency, retained segments, tool success and loop caps.
-- [ ] Add DynamoDB on-demand journey persistence and idempotency.
+- [ ] Add DynamoDB conditional writes for race-safe duplicate decisions/replans.
 - [ ] Move production secrets to Secrets Manager or SSM.
 - [ ] Replace public Function URL access with authentication and restricted CORS.
 

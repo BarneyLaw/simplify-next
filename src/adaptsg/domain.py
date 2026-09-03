@@ -58,6 +58,12 @@ class ProposalStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class JourneyStatus(StrEnum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    REJECTED = "rejected"
+
+
 class FreshnessStatus(StrEnum):
     FRESH = "fresh"
     STALE = "stale"
@@ -313,3 +319,23 @@ class ReplanProposal(StrictModel):
     requires_approval: bool
     validation: ValidationResult
     status: ProposalStatus = ProposalStatus.PENDING
+
+
+class ApprovalDecision(StrictModel):
+    target_id: UUID
+    approved: bool
+    expected_version: int = Field(ge=1)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class JourneyDecision(ApprovalDecision):
+    pass
+
+
+class JourneyState(StrictModel):
+    id: UUID = Field(default_factory=uuid4)
+    status: JourneyStatus = JourneyStatus.DRAFT
+    version: int = Field(default=1, ge=1)
+    itinerary: Itinerary
+    pending_initial_itinerary: bool = True
+    latest_replan_proposal: ReplanProposal | None = None

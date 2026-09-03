@@ -19,3 +19,19 @@ class ApprovalRequired(AdaptSGError):
 
 class ToolUnavailable(AdaptSGError):
     """Raised when live verification cannot provide required typed data."""
+
+
+class JourneyNotFound(AdaptSGError):
+    """Raised when a journey is missing or has expired."""
+
+
+class JourneyVersionConflict(AdaptSGError):
+    """Raised when a client acts on an out-of-date journey version."""
+
+    def __init__(self, message: str, *, current_version: int) -> None:
+        super().__init__(message)
+        self.current_version = current_version
+
+
+class InvalidJourneyDecision(AdaptSGError):
+    """Raised when an approval targets no pending journey item."""

@@ -66,9 +66,12 @@
         <tbody id="segments"></tbody>
       </table></div>
       <p id="source"></p>
+      <div id="initial-decision" aria-live="polite"></div>
     </div>
     <div class="card">
       <h2>Five-minute demo events</h2>
+      <div id="conditions" class="status" aria-live="polite" hidden></div>
+      <button id="monitor">Check current conditions</button>
       <button id="rain">Heavy rain + flood</button>
       <button id="fatigue">Mum is more tired</button>
       <div id="proposal" aria-live="polite"></div>
@@ -78,7 +81,7 @@
 </main>
 <script>
   const $ = (id) => document.getElementById(id);
-  let itinerary = null;
+  let journey = null;
   let runtimeMode = 'demo';
   const tomorrow = new Date(Date.now() + 86400000);
   $('journey-date').value = tomorrow.toISOString().slice(0, 10);
@@ -117,8 +120,9 @@
   function money(value) { return `S$${Number(value).toFixed(2)}`; }
   function clock(value) { return new Date(value).toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit',hour12:false}); }
 
-  function renderPlan(plan) {
-    itinerary = plan;
+  function renderPlan(state) {
+    journey = state;
+    const plan = state.itinerary;
     const hard = plan.request.hard;
     $('result').hidden = false;
     $('constraints').innerHTML = [
@@ -135,6 +139,14 @@
       <td>${safe(segment.venue.accessibility_status)}</td></tr>`).join('');
     $('source').textContent = `${provenance(plan, runtimeMode)} Constraint parser: ${plan.parser_source}.`;
     $('proposal').innerHTML = '';
+    $('initial-decision').innerHTML = state.pending_initial_itinerary
+      ? '<div class="status warning"><b>Caregiver approval required:</b> review this initial plan before activating it.<br><button id="approve-initial">Approve and save plan</button><button id="reject-initial" class="secondary">Reject plan</button></div>'
+      : '';
+    if (state.pending_initial_itinerary) {
+      $('approve-initial').onclick = () => decide(state.itinerary.id, true);
+      $('reject-initial').onclick = () => decide(state.itinerary.id, false);
+    }
+    ['monitor','rain','fatigue'].forEach((id) => { $(id).disabled = state.status !== 'active'; });
   }
   function renderProposal(proposal) {
     const changed = proposal.changes.map(change => `<p><b>Stop ${change.segment_index + 1}</b>: ${safe(change.before)} -> ${safe(change.after)}<br><small>${safe(change.reason)}</small></p>`).join('');
@@ -144,27 +156,41 @@
       ${proposal.requires_approval ? '<p>Caregiver approval is required because the cost threshold is exceeded.</p>' : ''}
       <button id="apply">${proposal.requires_approval ? 'Approve and apply' : 'Apply adjustment'}</button>
       <button id="reject" class="secondary">Keep current plan</button></div>`;
-    $('apply').onclick = () => renderPlan(proposal.itinerary);
-    $('reject').onclick = () => { $('proposal').innerHTML = ''; $('rain').focus(); };
+    $('apply').onclick = () => decide(proposal.id, true);
+    $('reject').onclick = () => decide(proposal.id, false);
     $('proposal-title').focus();
   }
+  async function decide(targetId, approved) {
+    try { renderPlan(await api(`/api/journeys/${journey.id}/decision`, {target_id:targetId,approved,expected_version:journey.version})); }
+    catch (error) { setAlert(error.message); }
+  }
   async function replan(trigger) {
-    try { renderProposal(await api('/api/replan',{itinerary,trigger})); }
+    try {
+      journey = await api(`/api/journeys/${journey.id}/replan`, {trigger});
+      renderProposal(journey.latest_replan_proposal);
+    }
     catch (error) { $('proposal').innerHTML = `<p class="status warning">${safe(error.message)} The current plan is retained unchanged; nothing was applied.</p>`; }
   }
 
   $('create').onclick = async () => {
     setStatus('Planning and validating...');
     try {
-      const outcome = await api('/api/plan',{prompt:$('prompt').value,journey_date:$('journey-date').value});
-      renderPlan(outcome.itinerary);
-      setStatus(outcome.warnings.length ? outcome.warnings.join(' ') : 'Plan validated successfully.');
+      const state = await api('/api/journeys',{prompt:$('prompt').value,journey_date:$('journey-date').value});
+      renderPlan(state);
+      setStatus('Plan validated. Caregiver approval is required before activation.');
     } catch (error) {
       setAlert(`No safe plan exists for this request: ${error.message.replace(/\.$/, '')}. AdaptSG did not weaken any `
         + `accessibility, walking, timing or budget limit, and did not invent a route.`);
     }
   };
-  $('rain').onclick = () => replan({type:'flood_alert',message:'Heavy rain began and a flood alert affects the outdoor segment.',affected_venue_ids:itinerary.segments.filter(s=>!s.venue.indoor).map(s=>s.venue.id)});
+  $('monitor').onclick = async () => {
+    try {
+      const result = await api(`/api/journeys/${journey.id}/monitor`);
+      $('conditions').hidden = false;
+      $('conditions').textContent = `Conditions: ${result.snapshot.weather_summary}; 24-hour PSI ${result.snapshot.psi}. ${result.triggers.length ? result.triggers.map((trigger) => trigger.message).join(' ') : 'No monitored condition affects this itinerary.'}`;
+    } catch (error) { setAlert(error.message); }
+  };
+  $('rain').onclick = () => replan({type:'flood_alert',message:'Heavy rain began and a flood alert affects the outdoor segment.',affected_venue_ids:journey.itinerary.segments.filter(s=>!s.venue.indoor).map(s=>s.venue.id)});
   $('fatigue').onclick = () => replan({type:'fatigue',message:'Mum is more tired than expected; shorten travel and add rest.'});
   api('/api/health').then(data => {
     runtimeMode = data.mode;

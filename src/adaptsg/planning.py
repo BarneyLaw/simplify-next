@@ -246,8 +246,31 @@ class JourneyReplanner:
             itinerary=selected,
             changes=changes,
             cost_delta_sgd=cost_delta,
-            requires_approval=cost_delta > self.approval_cost_increase_sgd,
+            requires_approval=self._requires_approval(itinerary, selected, changes, cost_delta),
             validation=validation,
+        )
+
+    def _requires_approval(
+        self,
+        before: Itinerary,
+        after: Itinerary,
+        changes: tuple[ItineraryChange, ...],
+        cost_delta: float,
+    ) -> bool:
+        requested_ids = (
+            before.request.hard.required_venue_ids | before.request.soft.preferred_venue_ids
+        )
+        retained_ids = {segment.venue.id for segment in after.segments}
+        requested_destination_removed = bool(requested_ids - retained_ids)
+        transport_upgrade = any(
+            left.route.mode is not TravelMode.TAXI and right.route.mode is TravelMode.TAXI
+            for left, right in zip(before.segments, after.segments, strict=False)
+        )
+        return (
+            cost_delta > self.approval_cost_increase_sgd
+            or requested_destination_removed
+            or transport_upgrade
+            or len(changes) > 1
         )
 
     def _candidate_itineraries(

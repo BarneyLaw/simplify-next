@@ -189,6 +189,11 @@ The Python runtime entry point and routing follow [Vercel's FastAPI convention](
 | `GET` | `/api/health` | Process health and current mode; no live tool call |
 | `POST` | `/api/plan` | Parse, plan and validate one journey |
 | `POST` | `/api/replan` | Validate and score a typed replan trigger |
+| `POST` | `/api/journeys` | Create a server-owned draft journey |
+| `GET` | `/api/journeys/{id}` | Retrieve journey state for refresh/recovery |
+| `POST` | `/api/journeys/{id}/monitor` | Retrieve conditions and detected triggers |
+| `POST` | `/api/journeys/{id}/replan` | Store a validated replan proposal |
+| `POST` | `/api/journeys/{id}/decision` | Approve or reject an initial plan or proposal |
 
 Example:
 

@@ -91,7 +91,7 @@ def test_applying_a_proposal_advances_the_plan_and_clears_the_proposal() -> None
     before = app.session_state["itinerary"]
     proposed = app.session_state["proposal"].itinerary
 
-    applied = click(app, "Apply adjustment")
+    applied = click(app, "Approve and apply")
 
     assert not applied.exception
     assert applied.session_state["proposal"] is None
@@ -183,7 +183,7 @@ def test_exhausting_the_replan_budget_is_reported_as_its_own_state() -> None:
     app = plan(start_app())
     for step in (
         "Simulate heavy rain + flood",
-        "Apply adjustment",
+        "Approve and apply",
         "Mum is more tired",
         "Approve and apply",
     ):

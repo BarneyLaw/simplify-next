@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     adaptsg_approval_cost_increase_sgd: float = Field(default=8, ge=0)
     adaptsg_max_replans: int = Field(default=2, ge=1, le=3)
     adaptsg_journeys_table: str | None = None
+    adaptsg_journey_ttl_hours: int = Field(default=24, ge=1, le=168)
     onemap_api_token: str | None = None
     onemap_bfa_enabled: bool = False
     data_gov_sg_api_key: str | None = None

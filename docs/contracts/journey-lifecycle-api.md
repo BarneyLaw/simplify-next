@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | `PROPOSED` |
+| Status | `IMPLEMENTED` |
 | Raised | 2026-09-02 by Role 3 (frontend and demo experience) |
 | Owner | Role 1 (agent and integration lead) — `src/adaptsg/web_api.py` |
 | Affected roles | 1 (routes and semantics), 3 (both clients), 4 (rehearsal script and gate) |
@@ -124,11 +124,9 @@ Tests: `tests/test_agent_and_api.py` covers route semantics, status codes and id
 `DRAFT` accept step and conflict recovery; `scripts/check_web.mjs` covers the browser client
 (Role 3).
 
-## Risk while this is unlanded
+## Implementation note
 
-The Vercel surface self-approves. A caregiver cost approval on `public/index.html` is a label on a
-button, and the server never sees the decision. This does not affect the Streamlit demo, which
-enforces approval in-process, and it does not affect deterministic validation on either surface —
-every itinerary the browser renders was validated server-side before it was returned. But the
-approval boundary specifically is advisory in the browser until these routes exist, and it should
-not be described as enforced in a demo or a deck until then.
+The lifecycle routes are now implemented in `web_api.py`, and the browser sends journey IDs and
+approval decisions to the server. Demo storage replays idempotent operations; the DynamoDB adapter
+stores journey snapshots with TTL. Production still needs conditional DynamoDB writes so two
+simultaneous requests cannot win the same idempotency key race.

@@ -15,6 +15,7 @@ from adaptsg.domain import (
     TriggerType,
 )
 from adaptsg.errors import NoFeasibleItinerary
+from adaptsg.persistence import InMemoryJourneyStore
 from adaptsg.planning import JourneyPlanner, JourneyReplanner
 from adaptsg.preference_parser import DeterministicPreferenceParser
 from adaptsg.presentation import itinerary_rows, retained_segment_percentage
@@ -189,3 +190,94 @@ def test_fastapi_rejects_invalid_and_infeasible_requests(
     )
     assert response.status_code == 422
     assert "accessibility" in response.json()["detail"]
+
+
+def test_stateful_journey_lifecycle_owns_approval_and_versions(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    store = InMemoryJourneyStore()
+    client = TestClient(create_app(make_service(planner, replanner), store=store))
+    created = client.post(
+        "/api/journeys",
+        json={
+            "prompt": "Plan a wheelchair day from Toa Payoh, lunch before 1 pm, budget $70.",
+            "journey_date": "2026-09-01",
+        },
+    )
+    assert created.status_code == 200
+    draft = created.json()
+    assert draft["status"] == "draft"
+    assert draft["pending_initial_itinerary"] is True
+
+    approved = client.post(
+        f"/api/journeys/{draft['id']}/decision",
+        json={
+            "target_id": draft["itinerary"]["id"],
+            "approved": True,
+            "expected_version": draft["version"],
+        },
+    )
+    assert approved.status_code == 200
+    active = approved.json()
+    assert active["status"] == "active"
+    assert active["version"] == 2
+
+    monitoring = client.post(f"/api/journeys/{draft['id']}/monitor")
+    assert monitoring.status_code == 200
+    proposal = client.post(
+        f"/api/journeys/{draft['id']}/replan",
+        json={"trigger": {"type": "fatigue", "message": "Mum is tired"}},
+    )
+    assert proposal.status_code == 200
+    pending = proposal.json()
+    assert pending["latest_replan_proposal"]["status"] == "pending"
+    assert pending["version"] == 3
+
+    rejected = client.post(
+        f"/api/journeys/{draft['id']}/decision",
+        json={
+            "target_id": pending["latest_replan_proposal"]["id"],
+            "approved": False,
+            "expected_version": pending["version"],
+        },
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "active"
+    assert rejected.json()["latest_replan_proposal"]["status"] == "rejected"
+
+    conflict = client.post(
+        f"/api/journeys/{draft['id']}/decision",
+        json={
+            "target_id": draft["itinerary"]["id"],
+            "approved": True,
+            "expected_version": 1,
+        },
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "journey_version_conflict"
+    assert conflict.json()["current_version"] == 4
+
+
+def test_stateful_lifecycle_replays_idempotent_requests(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    client = TestClient(create_app(make_service(planner, replanner), store=InMemoryJourneyStore()))
+    payload = {
+        "prompt": "Plan a wheelchair day from Toa Payoh, lunch before 1 pm, budget $70.",
+        "journey_date": "2026-09-01",
+        "idempotency_key": "create-demo-1",
+    }
+    first = client.post("/api/journeys", json=payload)
+    replay = client.post("/api/journeys", json=payload)
+    assert first.json()["id"] == replay.json()["id"]
+
+    decision = {
+        "target_id": first.json()["itinerary"]["id"],
+        "approved": True,
+        "expected_version": 1,
+        "idempotency_key": "approve-demo-1",
+    }
+    applied = client.post(f"/api/journeys/{first.json()['id']}/decision", json=decision)
+    applied_replay = client.post(f"/api/journeys/{first.json()['id']}/decision", json=decision)
+    assert applied.status_code == applied_replay.status_code == 200
+    assert applied.json() == applied_replay.json()
