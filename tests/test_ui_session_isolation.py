@@ -3,6 +3,10 @@
 `PROGRESS.md` records browser session QA as blocked on a connected browser. Two
 independent `AppTest` instances model two browser sessions in one process, so the
 isolation property is provable deterministically in CI.
+
+Since the journey lifecycle became server-authoritative the claim is stronger than it
+was: both sessions talk to one process-wide store, so isolation now has to come from
+the journey identifier each session holds rather than from separate per-process state.
 """
 
 from __future__ import annotations
@@ -30,40 +34,50 @@ def session() -> AppTest:
     return app
 
 
-def create_plan(app: AppTest) -> AppTest:
+def click(app: AppTest, label: str) -> AppTest:
     for button in app.button:
-        if button.label == "Create safe plan":
+        if button.label == label:
             return button.click().run()
-    raise AssertionError("the create button is missing")
+    raise AssertionError(f"no button labelled {label!r}; found {[b.label for b in app.button]}")
+
+
+def create_plan(app: AppTest) -> AppTest:
+    return click(click(app, "Create safe plan"), "Accept this plan")
 
 
 def test_a_plan_in_one_session_is_invisible_to_another_session() -> None:
     first = create_plan(session())
     second = session()
 
-    assert "itinerary" in first.session_state
+    assert "journey_id" in first.session_state
+    assert "journey_id" not in second.session_state
     assert "itinerary" not in second.session_state
     assert any("Create a plan to begin" in message.value for message in second.info)
 
 
 def test_a_replan_proposal_does_not_leak_between_sessions() -> None:
-    first = create_plan(session())
-    for button in first.button:
-        if button.label == "Simulate heavy rain + flood":
-            first = button.click().run()
-            break
+    first = click(create_plan(session()), "Simulate heavy rain + flood")
     second = create_plan(session())
 
     assert first.session_state["proposal"] is not None
     assert second.session_state["proposal"] is None
 
 
-def test_each_session_plans_independently_through_the_shared_service() -> None:
-    """The service is cached process-wide, so it must hold no per-journey state."""
+def test_each_session_owns_a_distinct_journey_in_the_shared_store() -> None:
+    """The service and its journey store are cached process-wide across sessions."""
     first = create_plan(session())
     second = create_plan(session())
 
+    assert first.session_state["journey_id"] != second.session_state["journey_id"]
     assert first.session_state["itinerary"].id != second.session_state["itinerary"].id
     assert first.session_state["itinerary"].segments[0].venue.id == (
         second.session_state["itinerary"].segments[0].venue.id
     )
+
+
+def test_one_session_never_reuses_another_sessions_retry_key() -> None:
+    """A shared idempotency key would replay one caregiver's decision into another session."""
+    first = create_plan(session())
+    second = create_plan(session())
+
+    assert first.session_state["session_nonce"] != second.session_state["session_nonce"]
