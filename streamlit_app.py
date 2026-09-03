@@ -292,7 +292,8 @@ def check_conditions() -> None:
 
 
 def create_plan(prompt: str, journey_date: date) -> None:
-    attempt = int(state_value("plan_attempt") or 0) + 1
+    previous = state_value("plan_attempt")
+    attempt = (previous if isinstance(previous, int) else 0) + 1
     st.session_state.plan_attempt = attempt
     st.session_state.monitoring = None
     run(
