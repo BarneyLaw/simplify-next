@@ -44,6 +44,10 @@ class OperationInProgress(JourneyConflict):
 class StaleJourneyVersion(JourneyConflict):
     """Raised when a mutation targets an old journey version."""
 
+    def __init__(self, message: str, *, current_version: int | None = None) -> None:
+        super().__init__(message)
+        self.current_version = current_version
+
 
 class InvalidJourneyTransition(JourneyConflict):
     """Raised when a decision or replan is invalid for the lifecycle state."""

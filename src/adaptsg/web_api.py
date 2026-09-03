@@ -16,16 +16,22 @@ from adaptsg.agent import AdaptSGService, build_service
 from adaptsg.domain import (
     JourneyDecision,
     JourneyState,
+    MonitoringOutcome,
     ReplanTrigger,
     StrictModel,
 )
 from adaptsg.errors import (
     AdaptSGError,
+    ApprovalRequired,
+    IdempotencyConflict,
     InvalidIdempotencyKey,
+    InvalidJourneyTransition,
     JourneyConflict,
     JourneyNotFound,
     NoFeasibleItinerary,
     OperationInProgress,
+    ReplanLimitReached,
+    StaleJourneyVersion,
     ToolUnavailable,
 )
 
@@ -39,6 +45,25 @@ class ReplanApiRequest(StrictModel):
     journey_id: UUID
     trigger: ReplanTrigger
     expected_version: int = Field(ge=1)
+
+
+class JourneyReplanApiRequest(StrictModel):
+    trigger: ReplanTrigger
+    expected_version: int = Field(ge=1)
+
+
+ERROR_CODES: dict[type[AdaptSGError], str] = {
+    ApprovalRequired: "approval_required",
+    IdempotencyConflict: "idempotency_conflict",
+    InvalidIdempotencyKey: "invalid_idempotency_key",
+    InvalidJourneyTransition: "invalid_journey_transition",
+    JourneyNotFound: "journey_not_found",
+    NoFeasibleItinerary: "no_feasible_itinerary",
+    OperationInProgress: "operation_in_progress",
+    ReplanLimitReached: "replan_limit_reached",
+    StaleJourneyVersion: "stale_journey_version",
+    ToolUnavailable: "tool_unavailable",
+}
 
 
 def _idempotency_key(request: Request) -> str:
@@ -80,13 +105,22 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
             status_code = 422
         else:
             status_code = 422
-        return JSONResponse(status_code=status_code, content={"detail": str(exc)}, headers=headers)
+        content: dict[str, str | int] = {
+            "code": ERROR_CODES.get(type(exc), "adaptsg_error"),
+            "detail": str(exc),
+        }
+        if isinstance(exc, StaleJourneyVersion) and exc.current_version is not None:
+            content["current_version"] = exc.current_version
+        return JSONResponse(status_code=status_code, content=content, headers=headers)
 
     @app.exception_handler(ClientError)
     async def provider_error(_request: Request, _exc: ClientError) -> JSONResponse:
         return JSONResponse(
             status_code=503,
-            content={"detail": "journey storage is temporarily unavailable; state was retained"},
+            content={
+                "code": "journey_storage_unavailable",
+                "detail": "journey storage is temporarily unavailable; state was retained",
+            },
         )
 
     @app.get("/api/health")
@@ -97,6 +131,7 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
             "storage": resolved_service.storage_mode,
         }
 
+    @app.post("/api/journeys", response_model=JourneyState)
     @app.post("/api/plan", response_model=JourneyState)
     def plan(payload: PlanApiRequest, request: Request) -> JourneyState:
         return resolved_service.start_journey(
@@ -109,6 +144,19 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
     def replan(payload: ReplanApiRequest, request: Request) -> JourneyState:
         return resolved_service.propose_replan(
             payload.journey_id,
+            payload.trigger,
+            expected_version=payload.expected_version,
+            idempotency_key=_idempotency_key(request),
+        )
+
+    @app.post("/api/journeys/{journey_id}/replan", response_model=JourneyState)
+    def replan_journey(
+        journey_id: UUID,
+        payload: JourneyReplanApiRequest,
+        request: Request,
+    ) -> JourneyState:
+        return resolved_service.propose_replan(
+            journey_id,
             payload.trigger,
             expected_version=payload.expected_version,
             idempotency_key=_idempotency_key(request),
@@ -127,6 +175,10 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
     @app.get("/api/journeys/{journey_id}", response_model=JourneyState)
     def get_journey(journey_id: UUID) -> JourneyState:
         return resolved_service.get_journey(journey_id)
+
+    @app.post("/api/journeys/{journey_id}/monitor", response_model=MonitoringOutcome)
+    def monitor_journey(journey_id: UUID) -> MonitoringOutcome:
+        return resolved_service.monitor_journey(journey_id)
 
     static_assets = public_directory()
     if static_assets is not None:

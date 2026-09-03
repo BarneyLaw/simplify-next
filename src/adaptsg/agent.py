@@ -429,6 +429,13 @@ class AdaptSGService:
     def get_journey(self, journey_id: UUID) -> JourneyState:
         return self.store.get(journey_id)
 
+    def monitor_journey(self, journey_id: UUID) -> MonitoringOutcome:
+        """Read current server-owned state before checking live conditions."""
+        current = self.store.get(journey_id)
+        if current.status is not JourneyStatus.ACTIVE or current.current_itinerary is None:
+            raise InvalidJourneyTransition("only active journeys can be monitored")
+        return self.monitor(current.current_itinerary)
+
     def decide_journey(
         self,
         journey_id: UUID,
@@ -641,7 +648,10 @@ class AdaptSGService:
     def _load_expected(self, journey_id: UUID, expected_version: int) -> JourneyState:
         current = self.store.get(journey_id)
         if current.version != expected_version:
-            raise StaleJourneyVersion("journey version changed; reload before retrying")
+            raise StaleJourneyVersion(
+                "journey version changed; reload before retrying",
+                current_version=current.version,
+            )
         return current
 
     def _mutate(

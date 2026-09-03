@@ -685,6 +685,29 @@ def test_monitor_has_no_false_positive(
     assert monitoring.triggers == ()
 
 
+def test_stateful_monitor_requires_an_active_journey(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    service = make_service(planner, replanner)
+    draft = service.start_journey(
+        "Plan a safe day.",
+        journey_date=date(2026, 9, 2),
+        idempotency_key="monitor-draft-key",
+    )
+    assert draft.pending_initial_itinerary is not None
+    with pytest.raises(InvalidJourneyTransition, match="only active journeys"):
+        service.monitor_journey(draft.journey_id)
+
+    active = service.decide_journey(
+        draft.journey_id,
+        decision=ApprovalDecision.APPROVE,
+        target_id=draft.pending_initial_itinerary.id,
+        expected_version=draft.version,
+        idempotency_key="monitor-approve-key",
+    )
+    assert service.monitor_journey(active.journey_id).triggers == ()
+
+
 def test_presentation_rows_and_retention(itinerary: Itinerary, replanner: JourneyReplanner) -> None:
     rows = itinerary_rows(itinerary)
     assert rows[0]["stop"] == "National Gallery Singapore"
@@ -720,7 +743,7 @@ def test_fastapi_stateful_approval_replan_and_static_page(
     assert client.get("/").status_code == 200
 
     plan = client.post(
-        "/api/plan",
+        "/api/journeys",
         headers={"Idempotency-Key": "http-plan-action"},
         json={
             "prompt": "Plan 10 am-5 pm for a wheelchair user, lunch by 1 pm, budget $70.",
@@ -742,11 +765,14 @@ def test_fastapi_stateful_approval_replan_and_static_page(
     assert decision.status_code == 200
     active = decision.json()
     assert active["status"] == "active"
+    monitored = client.post(f"/api/journeys/{active['journey_id']}/monitor")
+    assert monitored.status_code == 200
+    assert monitored.json()["triggers"] == []
+
     replan = client.post(
-        "/api/replan",
+        f"/api/journeys/{active['journey_id']}/replan",
         headers={"Idempotency-Key": "http-replan-action"},
         json={
-            "journey_id": active["journey_id"],
             "expected_version": active["version"],
             "trigger": {"type": "fatigue", "message": "Mum is tired"},
         },
@@ -783,6 +809,7 @@ def test_fastapi_rejects_invalid_and_infeasible_requests(
         },
     )
     assert response.status_code == 422
+    assert response.json()["code"] == "no_feasible_itinerary"
     assert "accessibility" in response.json()["detail"]
 
 
@@ -809,7 +836,10 @@ def test_fastapi_idempotency_versions_and_strict_payloads(
         json={**payload, "prompt": "Different"},
     )
     assert conflict.status_code == 409
-    assert client.get(f"/api/journeys/{UUID(int=0)}").status_code == 404
+    assert conflict.json()["code"] == "idempotency_conflict"
+    missing = client.get(f"/api/journeys/{UUID(int=0)}")
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "journey_not_found"
 
     draft = first.json()
     stale = client.post(
@@ -833,6 +863,8 @@ def test_fastapi_idempotency_versions_and_strict_payloads(
         },
     )
     assert stale_version.status_code == 409
+    assert stale_version.json()["code"] == "stale_journey_version"
+    assert stale_version.json()["current_version"] == draft["version"]
     legacy = client.post(
         "/api/replan",
         headers={"Idempotency-Key": "legacy-payload-1"},
@@ -861,7 +893,8 @@ def test_fastapi_maps_storage_failure_to_safe_503(
     )
     assert response.status_code == 503
     assert response.json() == {
-        "detail": "journey storage is temporarily unavailable; state was retained"
+        "code": "journey_storage_unavailable",
+        "detail": "journey storage is temporarily unavailable; state was retained",
     }
     assert "provider details" not in response.text
 
@@ -889,6 +922,7 @@ def test_fastapi_in_progress_returns_retry_after(
         "/api/plan", headers={"Idempotency-Key": key}, json=payload
     )
     assert response.status_code == 409
+    assert response.json()["code"] == "operation_in_progress"
     assert response.headers["Retry-After"] == "1"
 
 
