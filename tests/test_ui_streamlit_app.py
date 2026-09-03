@@ -41,10 +41,20 @@ def click(app: AppTest, label: str) -> AppTest:
     raise AssertionError(f"no button labelled {label!r}; found {[b.label for b in app.button]}")
 
 
-def plan(app: AppTest, prompt: str | None = None) -> AppTest:
+def labels(app: AppTest) -> list[str]:
+    return [button.label for button in app.button]
+
+
+def draft(app: AppTest, prompt: str | None = None) -> AppTest:
+    """Create a plan and stop at the draft, before any caregiver decision."""
     if prompt is not None:
         app.text_area[0].set_value(prompt)
     return click(app, "Create safe plan")
+
+
+def plan(app: AppTest, prompt: str | None = None) -> AppTest:
+    """Create a plan and accept it, which is what makes the journey active."""
+    return click(draft(app, prompt), "Accept this plan")
 
 
 def test_app_asks_for_a_plan_before_anything_exists() -> None:
@@ -60,20 +70,54 @@ def test_creating_a_plan_shows_the_locked_constraints_and_the_itinerary() -> Non
 
     assert not app.exception
     assert "itinerary" in app.session_state
-    labels = [metric.label for metric in app.metric]
-    assert "Wheelchair access" in labels
-    assert "Walking per leg" in labels
-    assert "Lunch starts by" in labels
-    assert "Finish by" in labels
-    assert "Total budget" in labels
+    metric_labels = [metric.label for metric in app.metric]
+    assert "Wheelchair access" in metric_labels
+    assert "Walking per leg" in metric_labels
+    assert "Lunch starts by" in metric_labels
+    assert "Finish by" in metric_labels
+    assert "Total budget" in metric_labels
     assert len(app.dataframe) == 1
 
 
+def test_a_new_plan_is_a_draft_that_gates_the_adaptation_controls() -> None:
+    """The server returns DRAFT; nothing is accepted until the caregiver decides."""
+    app = draft(start_app())
+
+    assert not app.exception
+    assert app.session_state["journey_status"] == "draft"
+    assert "Accept this plan" in labels(app)
+    assert "Reject and start again" in labels(app)
+    assert "Simulate heavy rain + flood" not in labels(app)
+    assert "Check live conditions" not in labels(app)
+
+
+def test_accepting_the_draft_activates_the_journey_and_advances_its_version() -> None:
+    app = draft(start_app())
+    version = app.session_state["journey_version"]
+
+    accepted = click(app, "Accept this plan")
+
+    assert accepted.session_state["journey_status"] == "active"
+    assert accepted.session_state["journey_version"] > version
+    assert "Simulate heavy rain + flood" in labels(accepted)
+
+
+def test_rejecting_the_draft_leaves_no_accepted_plan() -> None:
+    rejected = click(draft(start_app()), "Reject and start again")
+
+    assert not rejected.exception
+    assert rejected.session_state["journey_status"] == "rejected"
+    assert rejected.session_state["itinerary"] is None
+    assert any("Plan rejected" in message.value for message in rejected.info)
+    assert not rejected.dataframe
+
+
 def test_an_infeasible_request_stops_and_asks_instead_of_planning() -> None:
-    app = plan(start_app(), INFEASIBLE_PROMPT)
+    app = draft(start_app(), INFEASIBLE_PROMPT)
 
     assert not app.exception
     assert "itinerary" not in app.session_state
+    assert "journey_id" not in app.session_state
     assert app.error, "an infeasible request must report that no safe plan exists"
     assert not app.dataframe
 
@@ -108,6 +152,20 @@ def test_rejecting_a_proposal_keeps_the_current_plan() -> None:
     assert not kept.exception
     assert kept.session_state["proposal"] is None
     assert kept.session_state["itinerary"].id == before.id
+
+
+def test_a_stale_version_reloads_the_server_plan_instead_of_applying_blindly() -> None:
+    """Optimistic concurrency: the caregiver decides against what the server holds."""
+    app = plan(start_app())
+    current = app.session_state["itinerary"].id
+    app.session_state["journey_version"] = app.session_state["journey_version"] + 5
+
+    stale = click(app, "Simulate heavy rain + flood")
+
+    assert not stale.exception
+    assert any("has been reloaded" in message.value for message in stale.warning)
+    assert stale.session_state["itinerary"].id == current
+    assert stale.session_state["proposal"] is None
 
 
 def test_live_verification_failure_retains_the_current_plan(
@@ -153,7 +211,7 @@ def test_the_demo_never_presents_estimates_as_live_data() -> None:
 
 
 def test_the_no_feasible_panel_states_that_nothing_was_relaxed() -> None:
-    app = plan(start_app(), INFEASIBLE_PROMPT)
+    app = draft(start_app(), INFEASIBLE_PROMPT)
 
     errors = " ".join(message.value for message in app.error)
     warnings = " ".join(message.value for message in app.warning)

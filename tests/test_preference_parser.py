@@ -46,6 +46,31 @@ def test_deterministic_parser_extracts_hard_and_soft_constraints() -> None:
     assert request.soft.avoid_crowds
 
 
+@pytest.mark.parametrize(
+    "wording",
+    (
+        "We must visit Gardens by the Bay.",
+        "Gardens by the Bay is required.",
+        "We cannot miss Gardens by the Bay.",
+    ),
+)
+def test_gardens_is_required_only_with_explicit_language(wording: str) -> None:
+    parser = DeterministicPreferenceParser(VenueCatalog())
+    outcome = parser.parse(wording, journey_date=date(2026, 9, 2))
+    assert outcome.request.hard.required_venue_ids == frozenset({"gardens-bay-outdoor"})
+    assert outcome.request.soft.preferred_venue_ids == frozenset()
+
+
+def test_required_language_for_another_venue_does_not_promote_gardens() -> None:
+    parser = DeterministicPreferenceParser(VenueCatalog())
+    outcome = parser.parse(
+        "We would like Gardens by the Bay and must visit National Gallery.",
+        journey_date=date(2026, 9, 2),
+    )
+    assert outcome.request.hard.required_venue_ids == frozenset({"national-gallery"})
+    assert outcome.request.soft.preferred_venue_ids == frozenset({"gardens-bay-outdoor"})
+
+
 def test_deterministic_parser_uses_conservative_defaults() -> None:
     parser = DeterministicPreferenceParser(VenueCatalog())
     outcome = parser.parse("A quiet local day", journey_date=date(2026, 9, 2))
@@ -90,6 +115,9 @@ def test_bedrock_parser_accepts_fenced_json_and_usage() -> None:
     assert outcome.request.hard.max_walking_distance_m == 300
     assert outcome.token_usage.input_tokens == 120
     assert client.calls[0]["inferenceConfig"]["temperature"] == 0
+    system_prompt = client.calls[0]["system"][0]["text"]
+    assert "would like to visit" in system_prompt
+    assert "only when the user explicitly says must" in system_prompt
 
 
 def test_bedrock_failure_falls_back_safely() -> None:

@@ -64,6 +64,11 @@ class JourneyStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class ApprovalDecision(StrEnum):
+    APPROVE = "approve"
+    REJECT = "reject"
+
+
 class FreshnessStatus(StrEnum):
     FRESH = "fresh"
     STALE = "stale"
@@ -321,21 +326,56 @@ class ReplanProposal(StrictModel):
     status: ProposalStatus = ProposalStatus.PENDING
 
 
-class ApprovalDecision(StrictModel):
-    target_id: UUID
-    approved: bool
-    expected_version: int = Field(ge=1)
-    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
-
-
-class JourneyDecision(ApprovalDecision):
-    pass
-
-
 class JourneyState(StrictModel):
-    id: UUID = Field(default_factory=uuid4)
-    status: JourneyStatus = JourneyStatus.DRAFT
-    version: int = Field(default=1, ge=1)
-    itinerary: Itinerary
-    pending_initial_itinerary: bool = True
+    """Server-owned lifecycle state; only validated itineraries may be stored here."""
+
+    journey_id: UUID = Field(default_factory=uuid4)
+    status: JourneyStatus
+    current_itinerary: Itinerary | None = None
+    pending_initial_itinerary: Itinerary | None = None
     latest_replan_proposal: ReplanProposal | None = None
+    version: int = Field(default=1, ge=1)
+    warnings: tuple[str, ...] = ()
+    token_usage: TokenUsage = TokenUsage()
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime
+
+    @model_validator(mode="after")
+    def lifecycle_is_consistent(self) -> JourneyState:
+        if self.status is JourneyStatus.DRAFT:
+            if self.pending_initial_itinerary is None or self.current_itinerary is not None:
+                raise ValueError("draft journeys require one pending initial itinerary")
+            if self.latest_replan_proposal is not None:
+                raise ValueError("draft journeys cannot contain a replan proposal")
+        elif self.status is JourneyStatus.ACTIVE:
+            if self.current_itinerary is None or self.pending_initial_itinerary is not None:
+                raise ValueError("active journeys require exactly one current itinerary")
+            proposal = self.latest_replan_proposal
+            if proposal is not None:
+                if proposal.status is ProposalStatus.APPROVED:
+                    if proposal.itinerary.id != self.current_itinerary.id:
+                        raise ValueError("approved replan must be the current itinerary")
+                elif proposal.original_itinerary_id != self.current_itinerary.id:
+                    raise ValueError(
+                        "pending or rejected replan must reference the current itinerary"
+                    )
+        elif (
+            self.current_itinerary is not None
+            or self.pending_initial_itinerary is not None
+            or self.latest_replan_proposal is not None
+        ):
+            raise ValueError("rejected journeys cannot contain an itinerary or proposal")
+
+        timestamps = (self.created_at, self.updated_at, self.expires_at)
+        if any(value.tzinfo is None or value.utcoffset() is None for value in timestamps):
+            raise ValueError("journey timestamps must be timezone-aware")
+        if self.updated_at < self.created_at or self.expires_at <= self.updated_at:
+            raise ValueError("journey timestamps are out of order")
+        return self
+
+
+class JourneyDecision(StrictModel):
+    target_id: UUID
+    decision: ApprovalDecision
+    expected_version: int = Field(ge=1)

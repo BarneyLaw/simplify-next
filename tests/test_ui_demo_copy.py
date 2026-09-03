@@ -69,16 +69,8 @@ def test_the_full_venue_name_after_must_does_produce_a_hard_constraint() -> None
     assert GARDENS_BY_THE_BAY not in outcome.request.soft.preferred_venue_ids
 
 
-def test_the_short_alias_after_must_is_still_only_a_preference() -> None:
-    """Documents a parser asymmetry that makes the demo wording load-bearing.
-
-    `_mentioned_venue_ids` recognises the short alias "gardens by the bay", but
-    `_required_venue_ids` only escalates on the full catalog name or the spaced id,
-    so the phrasing a caregiver would actually type stays soft. Raised to Role 1, who
-    owns `preference_parser.py`. If that is fixed this test fails, which is the point:
-    the spoken demo claims Gardens by the Bay is a preference, and whoever changes the
-    escalation rules must re-read that decision at `PROGRESS.md:90` before landing it.
-    """
+def test_the_short_alias_after_must_produces_a_hard_constraint() -> None:
+    """Explicit requirement wording must override the demo's usual soft phrasing."""
     outcome = parse(
         SAMPLE_PROMPT.replace(
             "We would like to visit Gardens by the Bay.",
@@ -86,5 +78,5 @@ def test_the_short_alias_after_must_is_still_only_a_preference() -> None:
         )
     )
 
-    assert outcome.request.hard.required_venue_ids == frozenset()
-    assert GARDENS_BY_THE_BAY in outcome.request.soft.preferred_venue_ids
+    assert GARDENS_BY_THE_BAY in outcome.request.hard.required_venue_ids
+    assert GARDENS_BY_THE_BAY not in outcome.request.soft.preferred_venue_ids
