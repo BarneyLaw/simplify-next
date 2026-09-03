@@ -7,10 +7,21 @@ from typing import Any, Protocol, cast
 
 import httpx
 
-from adaptsg.domain import EnvironmentSnapshot, Location, ToolResult, Venue
+from adaptsg.domain import (
+    EnvironmentSnapshot,
+    FreshnessStatus,
+    Location,
+    ToolResult,
+    Venue,
+)
 from adaptsg.errors import ToolUnavailable
 from adaptsg.tools.catalog import VenueCatalog
-from adaptsg.tools.freshness import FreshnessKind, failed_result, successful_result
+from adaptsg.tools.freshness import (
+    FreshnessKind,
+    classify_freshness,
+    failed_result,
+    successful_result,
+)
 from adaptsg.tools.routing import distance_metres
 
 
@@ -95,6 +106,16 @@ class LiveEnvironmentClient:
                 datetime.fromisoformat(str(weather_record["updatedTimestamp"])),
                 datetime.fromisoformat(str(psi_item["updatedTimestamp"])),
             )
+            source_freshness = (
+                classify_freshness(
+                    datetime.fromisoformat(str(weather_record["updatedTimestamp"])),
+                    FreshnessKind.WEATHER,
+                ),
+                classify_freshness(
+                    datetime.fromisoformat(str(psi_item["updatedTimestamp"])),
+                    FreshnessKind.PSI,
+                ),
+            )
             flood_venues = self._flood_venues(floods)
             disruptions = self._train_disruptions(train)
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
@@ -107,7 +128,11 @@ class LiveEnvironmentClient:
             disrupted_route_labels=disruptions,
             observed_at=observed_at,
             source="data.gov.sg_weather_psi+lta_pub_flood_train",
-            freshness="fresh",
+            freshness=(
+                FreshnessStatus.STALE
+                if FreshnessStatus.STALE in source_freshness
+                else FreshnessStatus.FRESH
+            ),
             is_fixture=False,
         )
 
