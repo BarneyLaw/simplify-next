@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from itertools import product
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -19,9 +20,10 @@ from adaptsg.domain import (
     Venue,
     VenueCategory,
 )
-from adaptsg.errors import NoFeasibleItinerary, ReplanLimitReached
+from adaptsg.errors import NoFeasibleItinerary, ReplanLimitReached, ToolUnavailable
 from adaptsg.tools.catalog import VenueCatalog
-from adaptsg.tools.routing import RoutingClient, distance_metres
+from adaptsg.tools.metrics import calculate_plan_metrics
+from adaptsg.tools.routing import RoutingClient
 from adaptsg.validation import ItineraryValidator
 
 SINGAPORE = ZoneInfo("Asia/Singapore")
@@ -43,17 +45,41 @@ class JourneyPlanner:
 
     def create(self, request: JourneyRequest, *, parser_source: str = "deterministic") -> Itinerary:
         venues = self._select_initial_venues(request)
-        itinerary = self._schedule(
-            request=request,
-            venues=venues,
-            purposes=self._purposes_for(venues),
-            parser_source=parser_source,
+        purposes = self._purposes_for(venues)
+        candidates = (
+            self._schedule(
+                request=request,
+                venues=venues,
+                purposes=purposes,
+                parser_source=parser_source,
+                modes=modes,
+            )
+            for modes in product(
+                (TravelMode.PUBLIC_TRANSPORT, TravelMode.TAXI),
+                repeat=len(venues),
+            )
         )
-        result = self.validator.validate(itinerary)
-        if not result.valid:
-            messages = "; ".join(issue.message for issue in result.issues)
+        feasible = [
+            itinerary for itinerary in candidates if self.validator.validate(itinerary).valid
+        ]
+        if not feasible:
+            itinerary = self._schedule(
+                request=request,
+                venues=venues,
+                purposes=purposes,
+                parser_source=parser_source,
+            )
+            messages = "; ".join(
+                issue.message for issue in self.validator.validate(itinerary).issues
+            )
             raise NoFeasibleItinerary(f"no safe initial itinerary: {messages}")
-        return itinerary
+        return min(
+            feasible,
+            key=lambda itinerary: (
+                sum(segment.route.mode is TravelMode.TAXI for segment in itinerary.segments),
+                itinerary.total_cost_sgd,
+            ),
+        )
 
     def _select_initial_venues(self, request: JourneyRequest) -> tuple[Venue, ...]:
         required = [
@@ -169,20 +195,16 @@ class JourneyPlanner:
             current_location = venue.location
             current_label = venue.name
 
-        total_cost = round(
-            sum(
-                segment.venue.estimated_cost_sgd + segment.route.estimated_cost_sgd
-                for segment in segments
-            ),
-            2,
-        )
-        return Itinerary(
+        itinerary = Itinerary(
             request=request,
             segments=tuple(segments),
-            total_cost_sgd=total_cost,
+            total_cost_sgd=0,
             created_at=datetime.now(UTC),
             replan_count=replan_count,
             parser_source=parser_source,
+        )
+        return itinerary.model_copy(
+            update={"total_cost_sgd": calculate_plan_metrics(itinerary).total_cost_sgd}
         )
 
 
@@ -205,11 +227,11 @@ class JourneyReplanner:
             raise ReplanLimitReached(f"replanning is capped at {self.max_replans} cycles")
 
         candidates = self._candidate_itineraries(itinerary, trigger)
-        feasible: list[tuple[float, Itinerary]] = []
+        feasible: list[tuple[tuple[object, ...], Itinerary]] = []
         for candidate in candidates:
             validation = self.planner.validator.validate(candidate)
             if validation.valid:
-                feasible.append((self._change_score(itinerary, candidate), candidate))
+                feasible.append((self._candidate_score(itinerary, candidate), candidate))
         if not feasible:
             raise NoFeasibleItinerary(
                 "no safe replan exists without relaxing a hard constraint; user input is required"
@@ -250,11 +272,6 @@ class JourneyReplanner:
         original_venues = tuple(segment.venue for segment in itinerary.segments)
         purposes = tuple(segment.purpose for segment in itinerary.segments)
         used_ids = frozenset(venue.id for venue in original_venues)
-        previous_location = (
-            itinerary.request.start_location
-            if first == 0
-            else itinerary.segments[first - 1].venue.location
-        )
         replacements = self.planner.catalog.eligible(
             wheelchair_required=itinerary.request.hard.wheelchair_accessible_required,
             indoor_only=trigger.type
@@ -262,28 +279,23 @@ class JourneyReplanner:
             excluded_ids=used_ids | trigger.affected_venue_ids,
             categories=(VenueCategory.INDOOR_ATTRACTION, VenueCategory.INDOOR_MUSEUM),
         )
-        ranked = sorted(
-            replacements,
-            key=lambda venue: (
-                distance_metres(previous_location, venue.location),
-                venue.estimated_cost_sgd,
-                venue.id,
-            ),
-        )
         candidates = []
-        for replacement in ranked[:4]:
+        for replacement in replacements:
             venues = list(original_venues)
             venues[first] = replacement
-            candidates.append(
-                self.planner._schedule(
-                    request=itinerary.request,
-                    venues=tuple(venues),
-                    purposes=purposes,
-                    parser_source=itinerary.parser_source,
-                    replan_count=itinerary.replan_count + 1,
-                    preserved_prefix=itinerary.segments[:first],
+            try:
+                candidates.append(
+                    self.planner._schedule(
+                        request=itinerary.request,
+                        venues=tuple(venues),
+                        purposes=purposes,
+                        parser_source=itinerary.parser_source,
+                        replan_count=itinerary.replan_count + 1,
+                        preserved_prefix=itinerary.segments[:first],
+                    )
                 )
-            )
+            except ToolUnavailable:
+                continue
         return tuple(candidates)
 
     def _fatigue_candidates(self, itinerary: Itinerary) -> tuple[Itinerary, ...]:
@@ -371,7 +383,7 @@ class JourneyReplanner:
         return tuple(indices)
 
     @staticmethod
-    def _change_score(before: Itinerary, after: Itinerary) -> float:
+    def _candidate_score(before: Itinerary, after: Itinerary) -> tuple[object, ...]:
         changed = 0
         retained = min(len(before.segments), len(after.segments))
         for index in range(retained):
@@ -381,7 +393,16 @@ class JourneyReplanner:
         changed += abs(len(before.segments) - len(after.segments))
         walking = sum(segment.route.walking_distance_m for segment in after.segments)
         positive_cost_delta = max(0.0, after.total_cost_sgd - before.total_cost_sgd)
-        return changed * 10_000 + positive_cost_delta * 100 + walking
+        preferred_ids = after.request.soft.preferred_venue_ids
+        preferred_categories = after.request.soft.preferred_categories
+        preference_penalty = sum(
+            0
+            if segment.venue.id in preferred_ids or segment.venue.category in preferred_categories
+            else 1
+            for segment in after.segments
+        )
+        venue_ids = tuple(segment.venue.id for segment in after.segments)
+        return (changed, walking, positive_cost_delta, preference_penalty, venue_ids)
 
     @staticmethod
     def _diff(before: Itinerary, after: Itinerary, reason: str) -> tuple[ItineraryChange, ...]:

@@ -29,3 +29,13 @@ the replan cap. A live-tool failure retains the current plan, and an infeasible 
 Done means the appropriate tools are selected, unaffected items survive replanning, material
 changes require approval, failure stops safely, allocated tests pass, and the full gate is
 green before integration.
+
+## Pending contract changes
+
+- **Journey lifecycle API** (`PROPOSED`, raised 2026-09-02 by Role 3) —
+  `docs/contracts/journey-lifecycle-api.md`. The browser client applies a replan with no server
+  call and both clients hold the authoritative `Itinerary`, so caregiver approval is client-side
+  only. Requests journey routes over the `JourneyState` types already on
+  `feature/r1-stateful-approval-idempotency`, plus a typed error `code` on `422`. Contains one
+  open question for Role 1 to decide and record: whether a retried approve is idempotent or a
+  `409`.
