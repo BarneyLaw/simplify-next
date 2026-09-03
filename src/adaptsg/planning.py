@@ -407,6 +407,7 @@ class JourneyReplanner:
 
     @staticmethod
     def _candidate_score(before: Itinerary, after: Itinerary) -> tuple[object, ...]:
+        """Prefer fewer changes, less walking, lower cost delta, then soft preferences."""
         changed = 0
         retained = min(len(before.segments), len(after.segments))
         for index in range(retained):
