@@ -188,13 +188,19 @@ def test_replan_decisions_preserve_or_replace_the_server_plan(
     assert active.current_itinerary is not None
     original_id = active.current_itinerary.id
 
+    private_trigger_message = "Private caregiver note: traveller is tired"
     pending = service.propose_replan(
         active.journey_id,
-        ReplanTrigger(type=TriggerType.FATIGUE, message="Traveller is tired"),
+        ReplanTrigger(type=TriggerType.FATIGUE, message=private_trigger_message),
         expected_version=active.version,
         idempotency_key="fatigue-proposal-1",
     )
     assert pending.latest_replan_proposal is not None
+    assert private_trigger_message not in pending.model_dump_json()
+    assert all(
+        change.reason == "Verified fatigue adjustment"
+        for change in pending.latest_replan_proposal.changes
+    )
     rejected = service.decide_journey(
         pending.journey_id,
         decision=ApprovalDecision.REJECT,

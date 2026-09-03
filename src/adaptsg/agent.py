@@ -521,6 +521,20 @@ class AdaptSGService:
             if existing is not None and existing.status is ProposalStatus.PENDING:
                 raise InvalidJourneyTransition("the current journey already has a pending proposal")
             proposal = self.replanner.propose(current.current_itinerary, trigger)
+            proposal = proposal.model_copy(
+                update={
+                    "changes": tuple(
+                        change.model_copy(
+                            update={
+                                "reason": (
+                                    f"Verified {trigger.type.value.replace('_', ' ')} adjustment"
+                                )
+                            }
+                        )
+                        for change in proposal.changes
+                    )
+                }
+            )
             if (
                 not proposal.validation.valid
                 or proposal.original_itinerary_id != current.current_itinerary.id
