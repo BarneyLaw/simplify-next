@@ -11,6 +11,7 @@
     main { width:min(1100px,92vw); margin:2rem auto 5rem; }
     h1 { font-size:clamp(2.2rem,7vw,4.5rem); margin:0; color:var(--teal); }
     h2 { margin-top:2rem; }
+    h3 { margin-top:0; }
     .lede { font-size:1.2rem; max-width:760px; }
     .card { background:white; border:1px solid var(--line); border-radius:14px; padding:1.2rem; margin:1rem 0; box-shadow:0 5px 20px #0f172a0a; }
     label { display:block; font-weight:700; margin:.8rem 0 .35rem; }
@@ -18,6 +19,7 @@
     textarea { min-height:130px; }
     button { background:var(--teal); color:white; border:0; border-radius:8px; padding:.75rem 1rem; font-weight:700; cursor:pointer; margin:.4rem .35rem .4rem 0; }
     button.secondary { background:#334155; }
+    button[disabled] { background:#94a3b8; cursor:not-allowed; }
     :is(button,textarea,input,a):focus-visible { outline:3px solid var(--ink); outline-offset:2px; }
     .skip { position:absolute; left:-9999px; background:var(--ink); color:white; padding:.6rem 1rem; border-radius:0 0 8px 0; z-index:10; }
     .skip:focus { left:0; top:0; }
@@ -55,10 +57,10 @@
   </section>
 
   <section id="result" hidden>
-    <h2>Locked constraints</h2>
+    <h2 id="plan-heading">Locked constraints</h2>
     <div id="constraints" class="grid"></div>
     <div class="card">
-      <h2>Current safe itinerary</h2>
+      <h2 id="itinerary-heading">Proposed plan</h2>
       <div id="summary" class="grid"></div>
       <div class="table-wrap"><table>
         <caption>Timed stops with transport, walking distance, cost and verified accessibility status.</caption>
@@ -66,35 +68,75 @@
         <tbody id="segments"></tbody>
       </table></div>
       <p id="source"></p>
+      <div id="decision"></div>
     </div>
-    <div class="card">
+    <div class="card" id="events" hidden>
       <h2>Five-minute demo events</h2>
+      <button id="monitor">Check conditions</button>
       <button id="rain">Heavy rain + flood</button>
       <button id="fatigue">Mum is more tired</button>
+      <div id="conditions" aria-live="polite"></div>
       <div id="proposal" aria-live="polite"></div>
     </div>
   </section>
-  <footer>The LLM proposes. Deterministic code validates. No booking, payment or medical diagnosis tools are present.</footer>
+  <footer>The LLM proposes. Deterministic code validates. The server owns the journey; this page holds only its identifier and version. No booking, payment or medical diagnosis tools are present.</footer>
 </main>
 <script>
   const $ = (id) => document.getElementById(id);
-  let itinerary = null;
+
+  // The server owns the journey. This client holds an identifier and a version,
+  // never an itinerary it could edit and send back.
+  let journeyId = null;
+  let version = null;
+  let journeyStatus = null;
+  let decisionTargetId = null;
   let runtimeMode = 'demo';
+  let planAttempt = 0;
+  // Derived from what is on screen purely to describe the disruption. A trigger is
+  // caregiver-reported input; the server still owns and revalidates the plan.
+  let outdoorVenueIds = [];
+
   const tomorrow = new Date(Date.now() + 86400000);
   $('journey-date').value = tomorrow.toISOString().slice(0, 10);
 
   function safe(value) {
     return String(value).replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
   }
-  async function api(path, body) {
-    const response = await fetch(path, {method: body ? 'POST' : 'GET', headers:{'content-type':'application/json'}, body: body ? JSON.stringify(body) : undefined});
+
+  async function request(path, method, body, idempotencyKey) {
+    const headers = {'content-type': 'application/json'};
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+    const response = await fetch(path, {method, headers, body: body ? JSON.stringify(body) : undefined});
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.detail || 'Request failed');
+    if (!response.ok) {
+      const detail = typeof payload.detail === 'string' ? payload.detail : 'the request was rejected';
+      const error = new Error(detail);
+      error.code = typeof payload.code === 'string' ? payload.code : 'transport_error';
+      error.currentVersion = typeof payload.current_version === 'number' ? payload.current_version : null;
+      throw error;
+    }
     return payload;
   }
+
+  const read = (path) => request(path, 'GET', null, null);
+
+  // Every state-changing call goes through here, so the Idempotency-Key the API
+  // requires can never be forgotten at a call site.
+  function mutate(path, body, idempotencyKey) {
+    if (!idempotencyKey) throw new Error('every mutation needs an idempotency key');
+    return request(path, 'POST', body, idempotencyKey);
+  }
+
+  // One key per user action: reusing it on a retry replays the stored result
+  // instead of applying the decision twice.
+  const actionKey = () => `adaptsg-${crypto.randomUUID()}`;
+
   function setStatus(message) {
     $('runtime').textContent = message;
+  }
+  function clearAlert() {
     $('alert').hidden = true;
+    $('alert').textContent = '';
   }
   function setAlert(message) {
     $('alert').textContent = message;
@@ -113,12 +155,70 @@
     const action = mode === 'demo' ? 'generated' : 'verified against providers';
     return `Route values ${action} ${when} by ${sources} (${mode} mode).`;
   }
+  // Mirrors adaptsg.presentation.environment_provenance_label: a demo snapshot is
+  // generated at request time, so calling it "observed" would dress an estimate as a reading.
+  function conditionsProvenance(snapshot, mode) {
+    const when = new Date(snapshot.observed_at).toLocaleString('en-SG', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false,timeZoneName:'short'});
+    const action = mode === 'demo' ? 'Generated' : 'Observed';
+    return `${action} ${when} via ${snapshot.source}.`;
+  }
   function metric(label, value) { return `<div class="metric"><span>${safe(label)}</span><b>${safe(value)}</b></div>`; }
   function money(value) { return `S$${Number(value).toFixed(2)}`; }
   function clock(value) { return new Date(value).toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit',hour12:false}); }
 
+  // Only a genuinely infeasible request may claim that nothing was relaxed. A missing
+  // header, a stale version or an expired journey is a transport fault, not a safety verdict.
+  const ERROR_COPY = {
+    no_feasible_itinerary: (detail) =>
+      `No safe plan exists for this request: ${detail.replace(/\.$/, '')}. AdaptSG did not weaken any `
+      + 'accessibility, walking, timing or budget limit, and did not invent a route.',
+    replan_limit_reached: (detail) =>
+      `Replanning is bounded and this journey has reached its limit. ${detail} The current plan is retained unchanged.`,
+    approval_required: () =>
+      'This change increases cost beyond the approval threshold and needs an explicit caregiver decision.',
+    tool_unavailable: (detail) =>
+      `Live verification failed, so the current plan is retained unchanged. ${detail} No condition has been refreshed.`,
+    journey_storage_unavailable: (detail) =>
+      `${detail}. Nothing was applied; the current plan is retained unchanged.`,
+    invalid_journey_transition: (detail) =>
+      `That step is not available for this journey right now. ${detail}`,
+    journey_not_found: () =>
+      'This journey has expired or is no longer available. Create a new plan to continue.',
+    operation_in_progress: () =>
+      'The previous action is still being processed. Try again in a moment; nothing was applied twice.',
+    idempotency_conflict: () =>
+      'That action was already recorded with different details. Reload the plan and choose again.',
+    stale_journey_version: () =>
+      'This plan changed elsewhere, so it has been reloaded. Review it and choose again.',
+    invalid_idempotency_key: (detail) =>
+      `The request could not be sent correctly and nothing was applied. ${detail}`,
+  };
+
+  function describe(error) {
+    const copy = ERROR_COPY[error.code];
+    return copy ? copy(error.message) : `${error.message}. Nothing was applied; the current plan is retained unchanged.`;
+  }
+
+  async function guarded(action) {
+    try {
+      clearAlert();
+      await action();
+    } catch (error) {
+      // A stale version means someone else moved the journey on. Re-read it so the
+      // caregiver decides against what the server actually holds.
+      if (error.code === 'stale_journey_version' && journeyId) {
+        try {
+          renderJourney(await read(`/api/journeys/${journeyId}`));
+        } catch (reloadError) {
+          setAlert(describe(reloadError));
+          return;
+        }
+      }
+      setAlert(describe(error));
+    }
+  }
+
   function renderPlan(plan) {
-    itinerary = plan;
     const hard = plan.request.hard;
     $('result').hidden = false;
     $('constraints').innerHTML = [
@@ -134,8 +234,23 @@
       <td>${safe(money(segment.route.estimated_cost_sgd + segment.venue.estimated_cost_sgd))}</td>
       <td>${safe(segment.venue.accessibility_status)}</td></tr>`).join('');
     $('source').textContent = `${provenance(plan, runtimeMode)} Constraint parser: ${plan.parser_source}.`;
-    $('proposal').innerHTML = '';
+    outdoorVenueIds = plan.segments.filter((segment) => !segment.venue.indoor).map((segment) => segment.venue.id);
   }
+
+  // A draft plan is not an accepted plan. The caregiver decides, and only the server
+  // can move the journey to active.
+  function renderDraft(plan) {
+    $('itinerary-heading').textContent = 'Proposed plan, awaiting your decision';
+    $('decision').innerHTML = `<div class="status">
+      <h3 id="decision-title" tabindex="-1">Accept this plan?</h3>
+      <p>Nothing is booked. Accepting records your approval on the server and unlocks the monitoring events.</p>
+      <button id="accept">Accept this plan</button>
+      <button id="decline" class="secondary">Reject and start again</button></div>`;
+    $('accept').onclick = () => decide(decisionTargetId, 'approve');
+    $('decline').onclick = () => decide(decisionTargetId, 'reject');
+    $('decision-title').focus();
+  }
+
   function renderProposal(proposal) {
     const changed = proposal.changes.map(change => `<p><b>Stop ${change.segment_index + 1}</b>: ${safe(change.before)} -> ${safe(change.after)}<br><small>${safe(change.reason)}</small></p>`).join('');
     $('proposal').innerHTML = `<div class="status ${proposal.requires_approval ? 'warning' : ''}">
@@ -144,33 +259,98 @@
       ${proposal.requires_approval ? '<p>Caregiver approval is required because the cost threshold is exceeded.</p>' : ''}
       <button id="apply">${proposal.requires_approval ? 'Approve and apply' : 'Apply adjustment'}</button>
       <button id="reject" class="secondary">Keep current plan</button></div>`;
-    $('apply').onclick = () => renderPlan(proposal.itinerary);
-    $('reject').onclick = () => { $('proposal').innerHTML = ''; $('rain').focus(); };
+    $('apply').onclick = () => decide(proposal.id, 'approve');
+    $('reject').onclick = () => decide(proposal.id, 'reject');
     $('proposal-title').focus();
   }
-  async function replan(trigger) {
-    try { renderProposal(await api('/api/replan',{itinerary,trigger})); }
-    catch (error) { $('proposal').innerHTML = `<p class="status warning">${safe(error.message)} The current plan is retained unchanged; nothing was applied.</p>`; }
+
+  function renderJourney(state) {
+    journeyId = state.journey_id;
+    version = state.version;
+    journeyStatus = state.status;
+    $('conditions').innerHTML = '';
+    $('proposal').innerHTML = '';
+    $('decision').innerHTML = '';
+
+    if (state.status === 'rejected') {
+      $('result').hidden = true;
+      $('events').hidden = true;
+      setStatus('Plan rejected. Nothing was applied; describe the day again to plan afresh.');
+      return;
+    }
+    if (state.status === 'draft') {
+      decisionTargetId = state.pending_initial_itinerary.id;
+      $('events').hidden = true;
+      renderPlan(state.pending_initial_itinerary);
+      renderDraft(state.pending_initial_itinerary);
+      return;
+    }
+    decisionTargetId = null;
+    $('itinerary-heading').textContent = 'Current safe itinerary';
+    renderPlan(state.current_itinerary);
+    $('events').hidden = false;
+    const proposal = state.latest_replan_proposal;
+    if (proposal && proposal.status === 'pending') renderProposal(proposal);
   }
 
-  $('create').onclick = async () => {
+  function decide(targetId, decision) {
+    return guarded(async () => {
+      const state = await mutate(
+        `/api/journeys/${journeyId}/decision`,
+        {target_id: targetId, decision, expected_version: version},
+        actionKey(),
+      );
+      renderJourney(state);
+      setStatus(state.status === 'active'
+        ? 'Plan accepted and validated on the server.'
+        : 'Decision recorded.');
+    });
+  }
+
+  function replan(trigger) {
+    return guarded(async () => {
+      const state = await mutate(
+        `/api/journeys/${journeyId}/replan`,
+        {trigger, expected_version: version},
+        actionKey(),
+      );
+      renderJourney(state);
+    });
+  }
+
+  $('create').onclick = () => guarded(async () => {
     setStatus('Planning and validating...');
-    try {
-      const outcome = await api('/api/plan',{prompt:$('prompt').value,journey_date:$('journey-date').value});
-      renderPlan(outcome.itinerary);
-      setStatus(outcome.warnings.length ? outcome.warnings.join(' ') : 'Plan validated successfully.');
-    } catch (error) {
-      setAlert(`No safe plan exists for this request: ${error.message.replace(/\.$/, '')}. AdaptSG did not weaken any `
-        + `accessibility, walking, timing or budget limit, and did not invent a route.`);
-    }
-  };
-  $('rain').onclick = () => replan({type:'flood_alert',message:'Heavy rain began and a flood alert affects the outdoor segment.',affected_venue_ids:itinerary.segments.filter(s=>!s.venue.indoor).map(s=>s.venue.id)});
+    planAttempt += 1;
+    const state = await mutate(
+      '/api/journeys',
+      {prompt: $('prompt').value, journey_date: $('journey-date').value},
+      actionKey(),
+    );
+    renderJourney(state);
+    setStatus(state.warnings.length ? state.warnings.join(' ') : 'Plan validated successfully. Accept it to continue.');
+  });
+
+  $('monitor').onclick = () => guarded(async () => {
+    const outcome = await mutate(`/api/journeys/${journeyId}/monitor`, null, actionKey());
+    const triggers = outcome.triggers.length
+      ? outcome.triggers.map((trigger) => `<p>${safe(trigger.message)}</p>`).join('')
+      : '<p>No monitored condition currently affects this itinerary.</p>';
+    $('conditions').innerHTML = `<div class="status">
+      <h3 id="conditions-title" tabindex="-1">Conditions</h3>
+      <p>${safe(outcome.snapshot.weather_summary)}; 24-hour PSI ${safe(outcome.snapshot.psi)}.</p>
+      <p><small>${safe(conditionsProvenance(outcome.snapshot, runtimeMode))}</small></p>
+      ${triggers}</div>`;
+    $('conditions-title').focus();
+  });
+
+  $('rain').onclick = () => replan({type:'flood_alert',message:'Heavy rain began and a flood alert affects an outdoor segment.',affected_venue_ids:outdoorVenueIds});
   $('fatigue').onclick = () => replan({type:'fatigue',message:'Mum is more tired than expected; shorten travel and add rest.'});
-  api('/api/health').then(data => {
+
+  read('/api/health').then(data => {
     runtimeMode = data.mode;
     $('mode-badge').textContent = modeBadge(data.mode);
     setStatus(`Python API ready (${data.mode} mode).`);
-  }).catch(error => setAlert(error.message));
+  }).catch(error => setAlert(describe(error)));
 </script>
 </body>
 </html>
