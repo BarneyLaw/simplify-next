@@ -2,11 +2,17 @@
 
 | Field | Value |
 |---|---|
-| Status | `PROPOSED` |
+| Status | `LANDED` |
 | Raised | 2026-09-02 by Role 3 (frontend and demo experience) |
 | Owner | Role 1 (agent and integration lead) — `src/adaptsg/web_api.py` |
 | Affected roles | 1 (routes and semantics), 3 (both clients), 4 (rehearsal script and gate) |
-| Depends on | `feature/r1-stateful-approval-idempotency` (`bb0681e`), which already defines the types |
+| Server landed | 2026-09-02, `57792b6` and `51de50c` on `main` |
+| Clients landed | 2026-09-03, `feature/r3-stateful-clients` (Role 3) |
+| Outstanding | Role 4 documentation and rehearsal timing; Role 1 removal of the migration-only helpers |
+
+Everything requested below was granted. This entry is kept as the record of what was
+asked for and what was decided, not as an open request. Read it for the semantics; read
+`src/adaptsg/web_api.py` for the routes as they now stand.
 
 The `TEAM_WORKFLOW.md` one-liner for this request:
 
@@ -90,15 +96,20 @@ advisory.
   already built the four distinct states in Streamlit, and no HTTP client can render them while
   the class is discarded at `web_api.py:47-49`.
 
-## One question for Role 1 to decide and record
+## The idempotency question, as decided
 
-The branch is named for idempotency, so the semantics need stating rather than assuming: **does a
-retried approve return the resulting `JourneyState`, or a `409`?**
+The question was whether a retried approve returns the resulting `JourneyState` or a `409`.
 
-A browser retries on a flaky network, and "your own decision already applied" and "someone else
-changed this journey" must not look the same to a caregiver. Idempotent-on-replay with `409`
-reserved for a genuinely different expected version is the shape the UI is easiest to build
-against, but this is Role 1's semantics to define. Record the answer here once decided.
+**Decided: idempotent on replay.** The same `Idempotency-Key` with the same input replays the
+stored `JourneyState`; `409 idempotency_conflict` is reserved for the same key with genuinely
+different input, and `409 stale_journey_version` for a different `expected_version`, which
+carries `current_version` in the body so the client re-reads rather than guesses. The semantics
+are exercised in `tests/test_agent_and_api.py` (`test_idempotency_replays_and_conflicts` and
+`test_fastapi_idempotency_versions_and_strict_payloads`).
+
+Both clients rely on this. The browser mints one key per user action, so a retry over a flaky
+network replays. Streamlit derives its key from the journey version, which advances on every
+committed change, so a script rerun replays instead of applying a caregiver decision twice.
 
 ## Consequence to flag, not bury
 
@@ -113,22 +124,30 @@ demo timing and should agree the wording before this lands.
 
 ## Migration
 
-| Surface | Drops | Carries instead |
+Done, on `feature/r3-stateful-clients`:
+
+| Surface | Dropped | Carries instead |
 |---|---|---|
-| `public/index.html` | the `itinerary` global (`:81`), the local apply at `:147` | `journey_id` + `version`; apply becomes `POST .../decision` |
-| `streamlit_app.py` | `session_state.itinerary` as the authority, the direct `apply_proposal` call (`:133`) | `session_state.journey_id` + `version`; server response replaces local state |
-| `web_api.py` | nothing — `/api/plan` and `/api/replan` may stay for one slice | journey routes added alongside, then the stateless pair retired |
+| `public/index.html` | the `itinerary` global, the local apply | `journeyId` + `version`; apply is `POST .../decision`; one `fetch` helper and a `mutate` that refuses to send without a key |
+| `streamlit_app.py` | `session_state.itinerary` as the authority, and the direct `create_plan`, `propose_replan(Itinerary, …)`, `apply_proposal` and `monitor(itinerary)` calls | `session_state.journey_id` + `journey_version` + `journey_status`; whatever the server reports replaces local state |
+| `web_api.py` | nothing yet | `/api/plan` remains an alias of `POST /api/journeys`; the stateless `/api/replan` now has no client and is Role 1's to retire |
 
 Tests: `tests/test_agent_and_api.py` covers route semantics, status codes and idempotency
 (Role 1). `tests/test_ui_streamlit_app.py` and `tests/test_ui_session_isolation.py` cover the
-`DRAFT` accept step and conflict recovery; `scripts/check_web.mjs` covers the browser client
-(Role 3).
+`DRAFT` accept step, stale-version recovery and per-session retry keys;
+`tests/test_ui_browser_client.py` asserts every route the browser client names exists on
+`create_app()` and that the browser sequence returns the fields it reads; `scripts/check_web.mjs`
+asserts the client keeps one keyed request helper and never sends an itinerary (Role 3).
 
-## Risk while this is unlanded
+## What replaced the unlanded risk
 
-The Vercel surface self-approves. A caregiver cost approval on `public/index.html` is a label on a
-button, and the server never sees the decision. This does not affect the Streamlit demo, which
-enforces approval in-process, and it does not affect deterministic validation on either surface —
-every itinerary the browser renders was validated server-side before it was returned. But the
-approval boundary specifically is advisory in the browser until these routes exist, and it should
-not be described as enforced in a demo or a deck until then.
+This entry previously warned that the Vercel surface self-approved: a caregiver cost approval on
+`public/index.html` was a label on a button and the server never saw the decision. That is no
+longer true. Apply and reject are both `POST /api/journeys/{id}/decision`, and only the server can
+move a journey to `ACTIVE` or adopt a proposal, which is what makes the approval boundary
+enforceable rather than advisory.
+
+One thing worth keeping in mind for a deck or a demo: the boundary is enforced by the server for
+both surfaces, but the journey store defaults to `InMemoryJourneyStore` (`storage_mode`
+`memory_demo`) unless `ADAPTSG_JOURNEYS_TABLE` is set. A restart drops every journey. That is a
+durability limit, not an approval limit.
