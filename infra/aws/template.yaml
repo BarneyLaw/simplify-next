@@ -32,12 +32,18 @@ Parameters:
     Type: String
     Default: "false"
     AllowedValues: ["true", "false"]
+  LambdaReservedConcurrency:
+    Type: Number
+    Default: 5
+    MinValue: -1
+    Description: Set to -1 to omit reserved concurrency in quota-constrained accounts.
 
 Conditions:
   HasProviderSecret: !Not [!Equals [!Ref ProviderSecretName, ""]]
   BedrockInferenceEnabled: !Not
     - !Equals [!Join ["", !Ref BedrockModelArns], DISABLED]
   PointInTimeRecoveryEnabled: !Equals [!Ref EnablePointInTimeRecovery, "true"]
+  HasLambdaReservedConcurrency: !Not [!Equals [!Ref LambdaReservedConcurrency, -1]]
 
 Globals:
   Function:
@@ -207,7 +213,10 @@ Resources:
       Handler: adaptsg.aws_handler.handler
       Description: AdaptSG validated plan and bounded-replan API.
       Role: !GetAtt LambdaExecutionRole.Arn
-      ReservedConcurrentExecutions: 5
+      ReservedConcurrentExecutions: !If
+        - HasLambdaReservedConcurrency
+        - !Ref LambdaReservedConcurrency
+        - !Ref AWS::NoValue
       FunctionUrlConfig:
         AuthType: AWS_IAM
         InvokeMode: BUFFERED

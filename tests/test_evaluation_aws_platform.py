@@ -84,7 +84,10 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert "AttributeName: expires_at" in template
     assert "Type: AWS::S3::Bucket" in template
     assert "BlockPublicPolicy: true" in template
-    assert "ReservedConcurrentExecutions: 5" in template
+    assert "LambdaReservedConcurrency:" in template
+    assert "Default: 5" in template
+    assert "HasLambdaReservedConcurrency" in template
+    assert "ReservedConcurrentExecutions: !If" in template
     assert "Type: AWS::CloudWatch::Dashboard" in template
 
 
@@ -94,6 +97,7 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert "id-token: write" in workflow
     assert "aws-actions/configure-aws-credentials@v6" in workflow
     assert '"BedrockModelArns=DISABLED"' in workflow
+    assert '"LambdaReservedConcurrency=-1"' in workflow
     assert "AWS_ACCESS_KEY_ID" not in workflow
     assert "sts:AssumeRoleWithWebIdentity" in bootstrap
     assert "token.actions.githubusercontent.com:aud: sts.amazonaws.com" in bootstrap
