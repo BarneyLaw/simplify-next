@@ -81,6 +81,9 @@ SAM CLI and Python 3.12 are not installed in this workspace, so those checks rem
 - [ ] Complete transactional DynamoDB persistence for consent, intents and per-resource audit chains.
 - [ ] Add Cognito browser client, live allowlist verification and production telemetry/alarm coverage.
 - [ ] Run Python 3.12 full gate, SAM validate/build, staging AWS integration and restore drill.
+- [x] Add local CloudFormation schema lint plus rollback-safe table protection controls.
+- [x] Add explicit OAuth-scoped API routes, privacy-safe API access logs and edge throttling on the Role 4 recovery branch.
+- [ ] Complete the production-readiness handoffs in `docs/contracts/production-readiness-handoffs.md`.
 
 ## Current feature branches and merges
 
