@@ -229,8 +229,6 @@ Resources:
                 Action:
                   - cloudfront:CreateDistribution
                   - cloudfront:CreateDistributionWithTags
-                  - cloudfront:CreateDistributionWithTags
-                  - cloudfront:CreateDistributionWithTags
                   - cloudfront:CreateOriginAccessControl
                   - cloudfront:DeleteDistribution
                   - cloudfront:DeleteOriginAccessControl
