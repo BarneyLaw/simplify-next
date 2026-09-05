@@ -99,3 +99,8 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert "token.actions.githubusercontent.com:aud: sts.amazonaws.com" in bootstrap
     assert "repo:${GitHubRepository}:environment:${GitHubEnvironment}" in bootstrap
     assert "repo:${GitHubImmutableRepositoryPattern}:environment:${GitHubEnvironment}" in bootstrap
+    execution_role = bootstrap.split("CloudFormationExecutionRole:", 1)[1].split(
+        "GitHubDeployRole:", 1
+    )[0]
+    assert "cloudformation:CreateChangeSet" in execution_role
+    assert "aws:transform/Serverless-2016-10-31" in execution_role

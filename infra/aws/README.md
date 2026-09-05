@@ -12,6 +12,10 @@ permission. `ApplicationMode=demo` also keeps all planning inputs deterministic.
 - a least-privilege Lambda role, X-Ray tracing, 14-day logs, alarms, and a dashboard;
 - a separate bootstrap stack for GitHub OIDC, the SAM artifact bucket, and deployment roles.
 
+The CloudFormation execution role can expand only the regional
+`Serverless-2016-10-31` SAM transform; this permission is required in addition to the deploy
+role's permission to create the application stack change set.
+
 There is no VPC, NAT gateway, provisioned concurrency, EC2, RDS, booking, or payment resource.
 Lambda reserved concurrency is five. DynamoDB uses on-demand billing. Temporary S3 objects and
 old SAM artifacts expire automatically.
