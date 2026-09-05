@@ -44,7 +44,7 @@ The demo is reproducible without cloud credentials. Demo values are labelled and
 
 ## Quick start
 
-Requirements: Python 3.12 and Git. Node.js is only needed for the browser JavaScript syntax gate.
+Requirements: Python 3.12 and Git.
 
 ### Windows PowerShell
 
@@ -70,13 +70,14 @@ streamlit run streamlit_app.py
 
 Open `http://localhost:8501`. The default `ADAPTSG_MODE=demo` requires no network or secrets.
 
-### Local API and Vercel-style page
+### Local API only
 
 ```sh
 uvicorn adaptsg.web_api:app --reload --port 8000
 ```
 
-Open `http://localhost:8000` for the lightweight web mode or `http://localhost:8000/docs` for OpenAPI.
+Open `http://localhost:8000/docs` for OpenAPI. This FastAPI service backs Vercel and AWS
+Lambda; the full caregiver experience is the Streamlit app above.
 
 ## Docker
 
@@ -174,10 +175,9 @@ sam delete --stack-name adaptsg-demo
 
 Vercel cannot reliably host Streamlit's long-running WebSocket process. This repository therefore uses:
 
-- Streamlit for the full local/Docker experience;
-- `public/index.html` for the Vercel browser experience;
-- `api/index.py` as the Vercel FastAPI function;
-- the same Python service, validator and tests in both modes.
+- Streamlit for the full caregiver experience, run locally or in Docker;
+- `api/index.py` as the Vercel FastAPI function, serving the same JSON API AWS Lambda uses;
+- the same Python service, validator and tests in every mode.
 
 Install and deploy:
 
@@ -189,7 +189,7 @@ vercel --prod
 
 Set `ADAPTSG_MODE=demo` for a credential-free public demonstration. For live Bedrock calls from the Vercel Python function, configure all required AWS and Singapore API environment variables in the Vercel project. Hackathon AWS session credentials expire, so refresh them before the judging window. Use a narrowly scoped deploy identity for any longer-lived environment.
 
-The Python runtime entry point and routing follow [Vercel's FastAPI convention](https://vercel.com/docs/functions/runtimes/python). `vercel.json` excludes tests, infrastructure and Streamlit UI files from the function bundle.
+The Python runtime entry point and routing follow [Vercel's FastAPI convention](https://vercel.com/docs/functions/runtimes/python). `vercel.json` excludes tests, infrastructure and the Streamlit UI file from the function bundle; Vercel serves the JSON API only, with no browser page.
 
 ## API
 
@@ -228,7 +228,6 @@ No booking, payment or medical endpoint exists.
 ```text
 .
 |-- streamlit_app.py              Full caregiver demo UI
-|-- public/index.html             Lightweight Vercel web UI
 |-- api/index.py                  Vercel Python/FastAPI entry point
 |-- src/adaptsg/
 |   |-- agent.py                  Bounded LangGraph and service facade
@@ -236,7 +235,9 @@ No booking, payment or medical endpoint exists.
 |   |-- preference_parser.py      Bedrock extraction and safe fallback
 |   |-- planning.py               Planner and minimal-change replanner
 |   |-- validation.py             Deterministic hard-constraint authority
-|   |-- presentation.py           Pure UI/API formatting helpers
+|   |-- presentation.py           Pure UI/API formatting helpers shared by both
+|   |-- ui.py                     Pure HTML component renderers for Streamlit
+|   |-- ui.css                    Design tokens and component styles
 |   |-- web_api.py                Shared FastAPI routes
 |   |-- aws_handler.py            Lambda/Mangum adapter
 |   |-- tools/catalog.py          Curated venue access
@@ -246,7 +247,7 @@ No booking, payment or medical endpoint exists.
 |-- tests/                         Unit, contract and 20 scenario tests
 |-- scripts/check.*               Local equivalents of CI gates
 |-- Dockerfile                    Non-root Streamlit image
-|-- vercel.json                   Lean Vercel function/static config
+|-- vercel.json                   Lean Vercel function config
 |-- infra/aws/template.yaml       Lambda/Bedrock SAM stack
 |-- Makefile                      Lean SAM artifact builder
 |-- ARCHITECTURE.md               Flows, trust boundaries and deployment
@@ -277,7 +278,7 @@ Current verified baseline:
 - 98.1% branch coverage, with CI failing below 90%;
 - strict mypy, Ruff lint/format and Bandit;
 - dependency audit with no known vulnerabilities;
-- API, Streamlit headless and browser JavaScript smoke tests;
+- API and Streamlit headless smoke tests;
 - Docker build and AWS SAM validate/build jobs in GitHub Actions.
 
 The 20 scenarios include heavy rain, high PSI, flood, closure, train disruption, fatigue, reduced budget, early lunch/finish constraints, unverified accessibility and the replan loop cap.

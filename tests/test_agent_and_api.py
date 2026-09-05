@@ -1,6 +1,5 @@
 import json
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 from uuid import UUID
@@ -1114,23 +1113,15 @@ def test_api_consent_status_and_owner_audit(
     assert events.json()[0]["metadata"]["operation"] == "start_journey"
 
 
-def test_fastapi_stateful_approval_replan_and_static_page(
+def test_fastapi_stateful_approval_and_replan(
     planner: JourneyPlanner,
     replanner: JourneyReplanner,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository_root = Path(__file__).resolve().parents[1]
-    monkeypatch.chdir(repository_root)
-    monkeypatch.setattr(
-        web_api,
-        "__file__",
-        "/opt/hostedtoolcache/Python/3.12/site-packages/adaptsg/web_api.py",
-    )
     client = TestClient(create_app(make_service(planner, replanner)))
     health = client.get("/api/health")
     assert health.status_code == 200
     assert health.json() == {"status": "ok", "mode": "demo", "storage": "memory_demo"}
-    assert client.get("/").status_code == 200
+    assert client.get("/").status_code == 404, "Vercel serves the JSON API only, with no page"
 
     plan = client.post(
         "/api/journeys",

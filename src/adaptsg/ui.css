@@ -1,0 +1,195 @@
+/* AdaptSG design tokens and component styles, lifted from the retired public/index.html
+   browser client. Streamlit cannot host widgets inside these blocks, so every class here
+   is used only from st.html() calls in ui.py, plus the Streamlit override section below
+   which reskins Streamlit's own chrome (sidebar, alerts, buttons) to match. */
+@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
+
+:root{
+  --canvas:#fafaf9; --white:#FFFFFF;
+  --ink:#0c0a09; --body:#1c1917; --muted:#78716c; --faint:#a8a29e;
+  --line:#e8e6e5; --line-strong:#d6d3d1; --surface:#fafaf9;
+  --blue-100:#c1e1f7; --blue-200:#3398e1; --blue-300:#3ba6f1;
+  --blue-500:#3398e1; --blue-600:#1f6fa8; --blue-800:#0c0a09;
+  --breach:#B42318; --breach-wash:#FEF3F2; --breach-line:#FDA29B;
+  --caution:#B54708; --caution-wash:#FFFAEB; --caution-line:#FEC84B;
+  --pass:#067647; --pass-wash:#ECFDF3; --pass-line:#A6F4C5;
+  --shadow:rgba(0,0,0,.05) 0 4px 16px 0;
+  --shadow-lift:rgba(17,12,46,.12) 0 12px 45px 0;
+  --r:10px; --r-pill:9999px; --r-band:16px;
+  --display:'Inter Tight',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+  --ui:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+}
+
+h1,h2,h3,h4{font-family:var(--display);font-weight:400;margin:0;letter-spacing:-.021em;color:var(--ink)}
+p{margin:0}
+a{color:var(--blue-600);text-underline-offset:3px}
+a:hover{color:var(--blue-800)}
+ol,ul{margin:0;padding:0;list-style:none}
+.num{font-variant-numeric:tabular-nums}
+
+.brand{display:flex;align-items:center;gap:10px}
+.brand-mark{display:block;flex:0 0 auto}
+.brand .word{font-family:var(--display);font-weight:500;font-size:21px;letter-spacing:-.02em;color:var(--blue-800)}
+.tagline{font-size:13px;color:var(--muted);margin-top:-2px}
+.hero .brand-mark{margin:0 auto}
+
+.eyebrow{font-family:var(--ui);font-weight:600;font-size:12px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted)}
+
+.locked{display:flex;flex-direction:column;gap:0;margin-top:10px}
+.locked li{display:flex;align-items:flex-start;gap:8px;padding:9px 0;border-bottom:1px solid var(--line);font-size:15px}
+.locked li:last-child{border-bottom:0}
+.locked .k{color:var(--muted);flex:1}
+.locked .v{font-weight:600;color:var(--ink);text-align:right}
+.railnote{font-size:13px;color:var(--muted);line-height:1.45}
+
+.banner{display:flex;align-items:flex-start;gap:14px;padding:14px 16px;border-radius:var(--r)}
+.banner .edge{width:8px;align-self:stretch;flex:0 0 8px;border-radius:4px}
+.banner.demo{background:var(--caution-wash)}
+.banner.demo .edge{background:repeating-linear-gradient(135deg,var(--caution) 0 3px,transparent 3px 7px)}
+.banner.demo .btitle{color:var(--caution)}
+.banner.live{background:var(--white);border:1px solid var(--line)}
+.banner.live .edge{background:var(--blue-600)}
+.banner.live .btitle{color:var(--blue-800)}
+.banner .btxt{padding:2px 0}
+.btitle{font-weight:700;font-size:13px;letter-spacing:.09em;text-transform:uppercase}
+.banner p{font-size:15px;color:var(--ink);margin-top:2px}
+
+.pagehead{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+.pagehead h1{font-size:34px;line-height:1.1;letter-spacing:-.02em}
+.statusline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px}
+.daterow{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:16px;color:var(--body);margin-bottom:12px}
+
+.chip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:var(--r-pill);
+  font-size:14px;font-weight:600;font-family:var(--ui);line-height:1.3;border:1px solid transparent;
+  background:none}
+.chip.pass{background:var(--pass-wash);color:var(--pass);border-color:var(--pass-line)}
+.chip.caution{background:var(--caution-wash);color:var(--caution);border-color:var(--caution-line)}
+.chip.breach{background:var(--breach-wash);color:var(--breach);border-color:var(--breach-line)}
+.chip.plain{background:var(--white);color:var(--muted);border-color:var(--line);font-weight:500}
+.chip.blue{background:var(--blue-100);color:var(--blue-800);border-color:var(--blue-200)}
+
+.tl{display:flex;flex-direction:column}
+.stop{display:grid;grid-template-columns:88px 28px minmax(0,1fr);gap:0}
+.stop .when{padding-top:16px;text-align:right;padding-right:14px}
+.when .t1{font-size:18px;font-weight:700;color:var(--ink)}
+.when .t2{font-size:14px;color:var(--muted)}
+.spine{position:relative;display:flex;justify-content:center}
+.spine::before{content:"";position:absolute;top:0;bottom:0;width:2px;background:var(--blue-100)}
+.stop:first-child .spine::before{top:22px}
+.dot{position:relative;margin-top:18px;width:16px;height:16px;border-radius:50%;
+  background:var(--blue-300);border:2px solid var(--blue-800)}
+.card{border:1px solid var(--line);border-radius:var(--r);background:var(--white);
+  box-shadow:var(--shadow);padding:16px 18px;margin:8px 0 8px 14px;display:flex;flex-direction:column;gap:12px}
+.card h3{font-size:20px;line-height:1.25}
+.cardtop{display:flex;flex-direction:column;gap:8px}
+.badges{display:flex;gap:8px;flex-wrap:wrap}
+.facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 24px;
+  border-top:1px solid var(--line);padding-top:12px}
+.fact{display:flex;flex-direction:column;gap:2px}
+.fact .k{font-size:13px;color:var(--muted)}
+.fact .v{font-size:16px;color:var(--ink);font-weight:500}
+
+.leg{display:grid;grid-template-columns:88px 28px minmax(0,1fr)}
+.leg .spine::before{content:"";position:absolute;top:0;bottom:0;width:2px;
+  background:repeating-linear-gradient(to bottom,var(--blue-100) 0 5px,transparent 5px 10px)}
+.legbody{margin-left:14px;padding:10px 4px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+  font-size:15px;color:var(--body)}
+.legbody .sep{color:var(--line)}
+
+.meter{display:flex;align-items:center;gap:8px}
+.track{width:76px;height:8px;border-radius:4px;background:var(--line);overflow:hidden;flex:0 0 auto}
+.track i{display:block;height:100%;background:var(--blue-600)}
+.track.over{background:var(--breach-line)}
+.track.over i{background:var(--breach)}
+
+.summary{border:1px solid var(--line);border-radius:var(--r);background:var(--white);
+  padding:16px 18px;display:flex;gap:32px;flex-wrap:wrap;align-items:center}
+.sitem .k{font-size:13px;color:var(--muted)}
+.sitem .v{font-size:19px;font-weight:700;color:var(--ink)}
+.sitem .v small{font-size:14px;font-weight:500;color:var(--muted)}
+
+.band{border-radius:var(--r-band);padding:18px 20px;display:flex;flex-direction:column;gap:12px;
+  border:1px solid var(--line);background:var(--white)}
+.band.caution{background:var(--caution-wash);border-color:var(--caution-line)}
+.band.breach{background:var(--breach-wash);border-color:var(--breach-line)}
+.band.blue{background:var(--white);border-color:var(--blue-200)}
+.band.notice{border-style:dashed;background:var(--surface)}
+.band h2{font-size:22px}
+.band h3{font-size:18px}
+.band p{font-size:16px;color:var(--body);line-height:1.5}
+.bandhead{display:flex;gap:10px;align-items:flex-start}
+.bandhead svg{flex:0 0 auto;margin-top:3px}
+
+.map{border:1px solid var(--line);border-radius:var(--r-band);background:var(--white);
+  box-shadow:var(--shadow-lift);padding:16px;display:flex;flex-direction:column;gap:10px}
+.maphead{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.mapcanvas{position:relative;height:300px;border-radius:6px;background:var(--white);
+  border:1px solid var(--line);overflow:hidden}
+.pin{position:absolute;display:flex;align-items:center;gap:6px;transform:translate(-50%,-50%)}
+.pin b{width:26px;height:26px;border-radius:50%;background:var(--blue-300);border:2px solid var(--blue-800);
+  color:var(--blue-800);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;
+  font-style:normal}
+.pin span{font-size:13px;background:rgba(255,255,255,.92);padding:2px 6px;border-radius:4px;
+  border:1px solid var(--line);white-space:nowrap;color:var(--ink)}
+.mapnote{font-size:13px;color:var(--muted)}
+
+details{border:1px solid var(--line);border-radius:var(--r);background:var(--white)}
+summary{min-height:48px;padding:14px 18px;font-size:16px;font-weight:600;cursor:pointer;
+  display:flex;align-items:center;gap:10px;list-style:none}
+summary::-webkit-details-marker{display:none}
+.dbody{padding:0 18px 18px;display:flex;flex-direction:column;gap:14px;border-top:1px solid var(--line);padding-top:14px}
+.ev{display:grid;grid-template-columns:190px minmax(0,1fr);gap:6px 18px;font-size:15px;margin:0}
+.ev dt{color:var(--muted)}
+.ev dd{margin:0;color:var(--ink);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;word-break:break-word}
+.ev.plain dd{font-family:var(--ui);font-size:15px;line-height:1.5}
+details.tech{background:var(--surface);border-color:var(--line-strong);margin-top:2px}
+details.tech summary{min-height:44px;padding:10px 14px;font-size:15px;color:var(--muted)}
+details.tech .ev{padding:0 14px 14px;border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+
+.note{font-size:15px;color:var(--muted);line-height:1.5}
+.foot{font-size:14px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px;line-height:1.5;margin-top:8px}
+.hero{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding:20px 0 8px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+
+@media (max-width:900px){
+  .summary{gap:14px 20px;padding:14px}
+  .summary .sitem{flex:1 1 44%}
+  .sitem .v{font-size:17px}
+  .grid2,.facts{grid-template-columns:minmax(0,1fr)}
+  .stop,.leg{grid-template-columns:58px 18px minmax(0,1fr)}
+  .stop .when{padding-right:8px;padding-top:14px}
+  .when .t1{font-size:15px}
+  .when .t2{font-size:12px}
+  .card{margin-left:10px;padding:14px}
+  .card h3{font-size:18px;line-height:1.3}
+  .legbody{margin-left:10px;flex-direction:column;align-items:flex-start;gap:6px;font-size:14px}
+  .legbody .sep{display:none}
+  .meter{flex-wrap:wrap}
+  .track{width:60px}
+  .ev{grid-template-columns:minmax(0,1fr);gap:2px 0}
+  .ev dt{margin-top:10px;font-weight:600}
+  .mapcanvas{height:240px}
+}
+
+/* --- Streamlit chrome overrides: reskin native widgets to the tokens above --- */
+
+[data-testid="stAppHeader"], [data-testid="stToolbar"]{display:none}
+
+[data-testid="stMainBlockContainer"]{padding-top:1.5rem;max-width:1180px}
+
+[data-testid="stSidebar"]{
+  background:var(--white);border-right:1px solid var(--line);
+}
+[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]{gap:0}
+[data-testid="stSidebar"] hr{border-color:var(--line)}
+
+[data-testid="stAlert"]{border-radius:var(--r-band)}
+
+.st-key-create-plan button, .st-key-accept-plan button, .st-key-apply-proposal button{
+  background:var(--blue-300);border-color:var(--blue-500);color:var(--ink);font-weight:600;
+}
+.st-key-create-plan button:hover, .st-key-accept-plan button:hover, .st-key-apply-proposal button:hover{
+  border-color:var(--blue-600);color:var(--ink);
+}
+.st-key-restart-day button{background:var(--blue-300);border-color:var(--blue-500);color:var(--ink)}

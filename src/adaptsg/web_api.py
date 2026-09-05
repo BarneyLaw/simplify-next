@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from pathlib import Path
 from uuid import UUID
 
 from botocore.exceptions import ClientError
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import Field
 
 from adaptsg.agent import AdaptSGService, build_service
@@ -162,15 +160,6 @@ def _principal(request: Request, *, mode: str) -> PrincipalContext:
         roles=frozenset({ActorRole.CAREGIVER}),
         authenticated=True,
     )
-
-
-def public_directory() -> Path | None:
-    """Find browser assets in a source checkout or a non-editable installation."""
-    candidates = (
-        Path(__file__).resolve().parents[2] / "public",
-        Path.cwd() / "public",
-    )
-    return next((candidate for candidate in candidates if candidate.is_dir()), None)
 
 
 def create_app(service: AdaptSGService | None = None) -> FastAPI:
@@ -413,10 +402,6 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
         resolved_service.authorization.require(principal, Capability.AUDIT_READ)
         state = resolved_service.get_journey(journey_id, principal=principal)
         return resolved_service.audit.list(correlation_id=state.journey_id)
-
-    static_assets = public_directory()
-    if static_assets is not None:
-        app.mount("/", StaticFiles(directory=static_assets, html=True), name="static-demo")
 
     return app
 

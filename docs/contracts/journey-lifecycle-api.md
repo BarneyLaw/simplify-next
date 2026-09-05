@@ -174,3 +174,20 @@ recorded here so the next Role 1 session sees them as asked-for rather than assu
    attempt fails. Exposing both settings on `/api/health` (or on `JourneyState`, e.g. a
    `replan_limit_reached` boolean and a `max_replans` count) would let the composer disable itself
    proactively and let the approval screen name the real threshold.
+
+## The browser surface was retired (2026-09-05, Role 3)
+
+`public/index.html`, `scripts/check_web.mjs` and `tests/test_ui_browser_client.py` are gone. The
+redesign above moved into Streamlit instead of a second port to the browser client, because the
+browser client existed only to reconstruct in HTTP what Streamlit already gets in-process:
+`NoFeasibleItinerary`, `ToolUnavailable`, `ReplanLimitReached` and `StaleJourneyVersion` arrive as
+themselves at a Python call site, one `except` clause each, rather than as a `code` field the
+client re-translates. The CSS and component markup carried over into `src/adaptsg/ui.py` and
+`src/adaptsg/ui.css` — that part was never the duplication.
+
+`web_api.py` is unaffected: it still serves AWS Lambda and the Vercel function, and every route
+and status-code contract recorded above still holds. What is gone is the static client mounted in
+front of it (`public_directory()` and the `StaticFiles` mount in `create_app()`) — Vercel now
+serves the JSON API only, with no bundled browser page. A future HTTP client is still free to
+implement the four client invariants in `docs/roles/role-3-frontend-demo.md` against the routes
+this file describes; nothing here was retired.

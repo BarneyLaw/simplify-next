@@ -1,32 +1,20 @@
 """Role 3 drift guards for the spoken demo narrative.
 
 `PROGRESS.md:90` carries an open P0 decision: whether Gardens by the Bay is a soft
-preference in the spoken demo, with wording kept consistent. Both halves of that are
-true today and nothing enforces either, so these tests pin them from both sides — the
-copy the judges read and the constraints the parser actually produces.
+preference in the spoken demo, with wording kept consistent. These tests pin that from
+the parser side — the constraints `SAMPLE_PROMPT` actually produces.
 """
 
 from __future__ import annotations
 
-import re
 from datetime import date
-from pathlib import Path
 
 from adaptsg.domain import ParseOutcome
 from adaptsg.preference_parser import DeterministicPreferenceParser
 from adaptsg.tools.catalog import VenueCatalog
 from streamlit_app import SAMPLE_PROMPT
 
-BROWSER_CLIENT = Path(__file__).resolve().parents[1] / "public" / "index.html"
 GARDENS_BY_THE_BAY = "gardens-bay-outdoor"
-
-
-def browser_prompt() -> str:
-    """The prefilled prompt a judge sees on the Vercel surface."""
-    html = BROWSER_CLIENT.read_text(encoding="utf-8")
-    match = re.search(r'<textarea id="prompt"[^>]*>(.*?)</textarea>', html, re.DOTALL)
-    assert match is not None, "the browser client must prefill the demo prompt"
-    return match.group(1)
 
 
 def parse(prompt: str) -> ParseOutcome:
@@ -34,11 +22,6 @@ def parse(prompt: str) -> ParseOutcome:
         prompt,
         journey_date=date(2026, 9, 3),
     )
-
-
-def test_both_surfaces_ship_the_same_demo_prompt() -> None:
-    """Two surfaces telling two stories would split the five-minute demo narrative."""
-    assert browser_prompt() == SAMPLE_PROMPT
 
 
 def test_the_demo_prompt_makes_gardens_by_the_bay_a_preference_not_a_requirement() -> None:
