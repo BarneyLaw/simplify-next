@@ -94,6 +94,26 @@ SCENARIOS = (
         trigger=ReplanTrigger(type=TriggerType.FATIGUE, message="Tired"),
     ),
     Scenario(
+        "lunch-time-moved-earlier",
+        "replan",
+        True,
+        trigger=ReplanTrigger(
+            type=TriggerType.LUNCH_TIME_CHANGED,
+            message="Lunch moved earlier",
+            new_lunch_latest=time(12, 30),
+        ),
+    ),
+    Scenario(
+        "appointment-time-moved-earlier",
+        "replan",
+        True,
+        trigger=ReplanTrigger(
+            type=TriggerType.APPOINTMENT_CHANGED,
+            message="Appointment moved earlier",
+            new_finish_by=time(16, 30),
+        ),
+    ),
+    Scenario(
         "budget-reduced-to-25",
         "replan",
         True,
@@ -157,7 +177,7 @@ def test_evaluation_scenario(
     journey_request: JourneyRequest,
     itinerary: Itinerary,
 ) -> None:
-    assert len(SCENARIOS) == 20
+    assert len(SCENARIOS) == 22
     try:
         if scenario.kind == "initial":
             hard = journey_request.hard.model_copy(update=scenario.hard_updates or {})
