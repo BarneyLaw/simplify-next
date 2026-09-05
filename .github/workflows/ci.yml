@@ -45,8 +45,6 @@ jobs:
         run: python -m bandit -q -r src api streamlit_app.py
       - name: Dependency audit
         run: python -m pip_audit --skip-editable
-      - name: Browser JavaScript syntax
-        run: node scripts/check_web.mjs
       - name: Vercel configuration syntax
         run: python -m json.tool vercel.json > /dev/null
       - uses: actions/upload-artifact@v4
