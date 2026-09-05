@@ -41,6 +41,7 @@ from adaptsg.errors import (
     NoFeasibleItinerary,
     OperationInProgress,
     StaleJourneyVersion,
+    ToolUnavailable,
 )
 from adaptsg.planning import JourneyPlanner, JourneyReplanner
 from adaptsg.preference_parser import BedrockPreferenceParser, PreferenceParser
@@ -51,6 +52,7 @@ from adaptsg.tools.environment import (
     EnvironmentClient,
     LiveEnvironmentClient,
 )
+from adaptsg.tools.location import DemoLocationClient, LocationClient, OneMapLocationClient
 from adaptsg.tools.routing import DemoRoutingClient, OneMapRoutingClient
 from adaptsg.validation import ItineraryValidator
 
@@ -330,6 +332,7 @@ class AdaptSGService:
         planner: JourneyPlanner,
         replanner: JourneyReplanner,
         environment: EnvironmentClient,
+        location: LocationClient | None = None,
         store: JourneyStore | None = None,
         ttl_hours: int = 24,
         mode: str = "demo",
@@ -339,6 +342,7 @@ class AdaptSGService:
         self.planner = planner
         self.replanner = replanner
         self.environment = environment
+        self.location = location
         self._clock = clock or (lambda: datetime.now(UTC))
         self.store = store or InMemoryJourneyStore(clock=self._clock)
         self.ttl = timedelta(hours=ttl_hours)
@@ -364,8 +368,9 @@ class AdaptSGService:
                 return {}
             parsed = state["parsed"]
             try:
+                request = self._resolve_start_location(parsed.request)
                 itinerary = self.planner.create(
-                    parsed.request,
+                    request,
                     parser_source=parsed.source,
                 )
                 return {"itinerary": itinerary}
@@ -391,6 +396,19 @@ class AdaptSGService:
             itinerary=result["itinerary"],
             warnings=parsed.warnings,
             token_usage=parsed.token_usage,
+        )
+
+    def _resolve_start_location(self, request: JourneyRequest) -> JourneyRequest:
+        if self.location is None:
+            return request
+        results = self.location.search(request.start_label)
+        if not results:
+            raise ToolUnavailable(
+                f"location verification returned no result for {request.start_label!r}"
+            )
+        selected = results[0]
+        return request.model_copy(
+            update={"start_label": selected.label, "start_location": selected.location}
         )
 
     def start_journey(
@@ -821,6 +839,11 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
     resolved = settings or get_settings()
     catalog = VenueCatalog()
     validator = ItineraryValidator(max_replans=resolved.adaptsg_max_replans)
+    location = (
+        DemoLocationClient()
+        if resolved.adaptsg_mode == "demo"
+        else OneMapLocationClient(token=resolved.onemap_api_token or "")
+    )
     routing = (
         DemoRoutingClient()
         if resolved.adaptsg_mode == "demo"
@@ -866,6 +889,7 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
         planner=planner,
         replanner=replanner,
         environment=environment,
+        location=location,
         store=store,
         ttl_hours=resolved.adaptsg_journey_ttl_hours,
         mode=resolved.adaptsg_mode,

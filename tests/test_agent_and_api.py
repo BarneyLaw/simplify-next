@@ -21,6 +21,7 @@ from adaptsg.agent import (
 from adaptsg.domain import (
     ApprovalDecision,
     Itinerary,
+    Location,
     JourneyRequest,
     JourneyState,
     JourneyStatus,
@@ -48,6 +49,7 @@ from adaptsg.presentation import itinerary_rows, retained_segment_percentage
 from adaptsg.settings import Settings
 from adaptsg.tools.catalog import VenueCatalog
 from adaptsg.tools.environment import DemoEnvironmentClient
+from adaptsg.tools.location import DemoLocationClient, LocationClient
 from adaptsg.web_api import create_app
 
 
@@ -70,6 +72,7 @@ def make_service(
     replanner: JourneyReplanner,
     *,
     environment: DemoEnvironmentClient | None = None,
+    location: LocationClient | None = None,
     store: JourneyStore | None = None,
     clock: Any | None = None,
     ttl_hours: int = 24,
@@ -79,6 +82,7 @@ def make_service(
         planner=planner,
         replanner=replanner,
         environment=environment or DemoEnvironmentClient(),
+        location=location,
         store=store,
         clock=clock,
         ttl_hours=ttl_hours,
@@ -107,6 +111,27 @@ def start_and_approve(service: AdaptSGService, *, suffix: str = "base") -> Journ
         expected_version=draft.version,
         idempotency_key=f"approve-{suffix}-key",
     )
+
+
+def test_start_location_is_resolved_before_live_planning(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    service = make_service(
+        planner,
+        replanner,
+        location=DemoLocationClient(),
+    )
+
+    draft = service.start_journey(
+        "Plan a safe day starting from City Hall.",
+        journey_date=date(2026, 9, 2),
+        idempotency_key="resolve-city-hall-1",
+    )
+
+    assert draft.pending_initial_itinerary is not None
+    first_route = draft.pending_initial_itinerary.segments[0].route
+    assert first_route.origin_label == "City Hall"
+    assert first_route.origin == Location(lat=1.2931, lng=103.8520)
 
 
 def test_journey_state_rejects_invalid_lifecycle(itinerary: Itinerary) -> None:
