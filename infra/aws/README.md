@@ -48,6 +48,8 @@ aws cloudformation deploy `
   --capabilities CAPABILITY_NAMED_IAM `
   --parameter-overrides `
     GitHubRepository=BarneyLaw/simplify-next `
+    GitHubImmutableRepositoryPattern='BarneyLaw@*/simplify-next@*' `
+    GitHubEnvironment=aws-demo `
     ApplicationStackName=adaptsg-demo
 ```
 
@@ -57,8 +59,12 @@ If the provider already exists, repeat that command with its ARN:
 ExistingGitHubOidcProviderArn=arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com
 ```
 
-The trust policy is restricted to this repository. In GitHub, create an `aws-demo` environment,
-allow deployments only from `main`, and add a required reviewer if the account supports it.
+The trust policy is restricted to this repository and the `aws-demo` environment. GitHub
+repositories created after 15 July 2026 use immutable OIDC subjects containing owner and
+repository IDs. The bootstrap accepts both the legacy subject and the immutable subject pattern;
+replace the two `*` values in `GitHubImmutableRepositoryPattern` with the exact numeric IDs when
+available. In GitHub, create an `aws-demo` environment, allow deployments only from `main`, and
+add a required reviewer if the account supports it.
 
 Copy the bootstrap stack outputs into GitHub Actions environment variables:
 

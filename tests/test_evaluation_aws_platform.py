@@ -97,4 +97,5 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert "AWS_ACCESS_KEY_ID" not in workflow
     assert "sts:AssumeRoleWithWebIdentity" in bootstrap
     assert "token.actions.githubusercontent.com:aud: sts.amazonaws.com" in bootstrap
-    assert 'token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepository}:*"' in bootstrap
+    assert 'repo:${GitHubRepository}:environment:${GitHubEnvironment}' in bootstrap
+    assert 'repo:${GitHubImmutableRepositoryPattern}:environment:${GitHubEnvironment}' in bootstrap
