@@ -49,7 +49,7 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 | Docker image build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
 | SAM validate/build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
 | AWS CloudFormation schemas | Passed locally | `cfn-lint` 1.56.0 on application and OIDC bootstrap templates |
-| AWS Lambda/DynamoDB deployment smoke | Pending external setup | GitHub OIDC/account variables and first `main` deployment required |
+| AWS Lambda/DynamoDB deployment smoke | Blocked; fix prepared | First `main` deployment exposed GitHub's immutable post-July-2026 OIDC subject; bootstrap trust update and rerun required |
 | Vercel platform build | Pending deployment | Vercel CLI/account unavailable locally |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
@@ -84,7 +84,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
 8. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
 9. Deploy the Vercel demo and inspect it in a connected browser at desktop and mobile widths.
-10. Bootstrap the AWS OIDC stack, configure the protected `aws-demo` GitHub environment, deploy the SAM stack, and retain the first Lambda/DynamoDB smoke evidence.
+10. Apply the immutable GitHub OIDC bootstrap update, rerun the protected `aws-demo` deployment, and retain the first Lambda/DynamoDB smoke evidence.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
 

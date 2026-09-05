@@ -6,6 +6,17 @@ Parameters:
     Type: String
     Default: BarneyLaw/simplify-next
     AllowedPattern: ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$
+  GitHubImmutableRepositoryPattern:
+    Type: String
+    Default: BarneyLaw@*/simplify-next@*
+    AllowedPattern: ^[A-Za-z0-9_.-]+@([0-9]+|\*)/[A-Za-z0-9_.-]+@([0-9]+|\*)$
+    Description: >-
+      GitHub's immutable OIDC repository segment. Replace the asterisks with the
+      exact owner and repository IDs when they are available.
+  GitHubEnvironment:
+    Type: String
+    Default: aws-demo
+    AllowedPattern: ^[A-Za-z0-9_.-]+$
   ApplicationStackName:
     Type: String
     Default: adaptsg-demo
@@ -206,7 +217,9 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepository}:*"
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubRepository}:environment:${GitHubEnvironment}"
+                  - !Sub "repo:${GitHubImmutableRepositoryPattern}:environment:${GitHubEnvironment}"
       Policies:
         - PolicyName: DeployAdaptSgOnly
           PolicyDocument:
