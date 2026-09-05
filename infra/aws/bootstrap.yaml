@@ -199,13 +199,14 @@ Resources:
                   - !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis"
                   - !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/*"
                   - !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}::/tags/*"
-              - Sid: ManageEvidenceBucket
+              - Sid: ManageApplicationBuckets
                 Effect: Allow
                 Action:
                   - s3:CreateBucket
                   - s3:DeleteBucket
                   - s3:DeleteBucketPolicy
                   - s3:GetBucketPolicy
+                  - s3:GetBucketLocation
                   - s3:GetBucketOwnershipControls
                   - s3:GetBucketTagging
                   - s3:GetBucketVersioning
@@ -220,7 +221,27 @@ Resources:
                   - s3:PutEncryptionConfiguration
                   - s3:PutLifecycleConfiguration
                   - s3:PutBucketPublicAccessBlock
-                Resource: !Sub "arn:${AWS::Partition}:s3:::${AWS::AccountId}-${AWS::Region}-${ApplicationStackName}-evidence"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${AWS::AccountId}-${AWS::Region}-${ApplicationStackName}-evidence"
+                  - !Sub "arn:${AWS::Partition}:s3:::${AWS::AccountId}-${AWS::Region}-${ApplicationStackName}-web"
+              - Sid: ManageCloudFrontWebDelivery
+                Effect: Allow
+                Action:
+                  - cloudfront:CreateDistribution
+                  - cloudfront:CreateDistributionWithTags
+                  - cloudfront:CreateOriginAccessControl
+                  - cloudfront:DeleteDistribution
+                  - cloudfront:DeleteOriginAccessControl
+                  - cloudfront:GetDistribution
+                  - cloudfront:GetDistributionConfig
+                  - cloudfront:GetOriginAccessControl
+                  - cloudfront:GetOriginAccessControlConfig
+                  - cloudfront:ListTagsForResource
+                  - cloudfront:TagResource
+                  - cloudfront:UntagResource
+                  - cloudfront:UpdateDistribution
+                  - cloudfront:UpdateOriginAccessControl
+                Resource: "*"
               - Sid: ReadSamArtifacts
                 Effect: Allow
                 Action:
@@ -328,6 +349,25 @@ Resources:
                 Resource:
                   - !Sub "arn:${AWS::Partition}:s3:::${AWS::AccountId}-${AWS::Region}-${ApplicationStackName}-evidence/catalog/*"
                   - !Sub "arn:${AWS::Partition}:s3:::${AWS::AccountId}-${AWS::Region}-${ApplicationStackName}-evidence/evals/*"
+              - Sid: PublishStaticWebAssets
+                Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${AWS::AccountId}-${AWS::Region}-${ApplicationStackName}-web"
+              - Sid: PublishStaticWebAssetObjects
+                Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${AWS::AccountId}-${AWS::Region}-${ApplicationStackName}-web/*"
+              - Sid: InvalidateStaticWebCache
+                Effect: Allow
+                Action:
+                  - cloudfront:CreateInvalidation
+                  - cloudfront:GetInvalidation
+                Resource: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*"
               - Sid: PassCloudFormationRole
                 Effect: Allow
                 Action: iam:PassRole

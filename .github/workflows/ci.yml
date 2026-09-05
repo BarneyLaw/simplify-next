@@ -92,7 +92,7 @@ jobs:
   deploy-aws:
     name: Deploy AWS demo
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     needs: [correctness, docker, sam]
     if: >-
       github.event_name == 'push' &&
@@ -146,32 +146,50 @@ jobs:
         run: |
           set -euo pipefail
           sam build --template-file infra/aws/template.yaml
-          parameters=(
-            "EnvironmentName=demo"
-            "ApplicationMode=demo"
-            "AllowedCorsOrigin=${ADAPTSG_ALLOWED_CORS_ORIGIN}"
-            "CognitoCallbackUrl=${ADAPTSG_COGNITO_CALLBACK_URL}"
-            "CognitoLogoutUrl=${ADAPTSG_COGNITO_LOGOUT_URL}"
-            "BedrockModelArns=DISABLED"
-            "EnablePointInTimeRecovery=false"
-            "EnableDeletionProtection=false"
-            "LambdaReservedConcurrency=-1"
-          )
-          if [[ -n "${ADAPTSG_PROVIDER_SECRET_NAME}" ]]; then
-            parameters+=("ProviderSecretName=${ADAPTSG_PROVIDER_SECRET_NAME}")
-          fi
-          sam deploy \
-            --template-file .aws-sam/build/template.yaml \
+          deploy_stack() {
+            local allowed_origin="$1"
+            local callback_url="$2"
+            local logout_url="$3"
+            local parameters=(
+              "EnvironmentName=demo"
+              "ApplicationMode=demo"
+              "AllowedCorsOrigin=${allowed_origin}"
+              "CognitoCallbackUrl=${callback_url}"
+              "CognitoLogoutUrl=${logout_url}"
+              "EnableSelfSignUp=true"
+              "BedrockModelArns=DISABLED"
+              "EnablePointInTimeRecovery=false"
+              "EnableDeletionProtection=false"
+              "LambdaReservedConcurrency=-1"
+            )
+            if [[ -n "${ADAPTSG_PROVIDER_SECRET_NAME}" ]]; then
+              parameters+=("ProviderSecretName=${ADAPTSG_PROVIDER_SECRET_NAME}")
+            fi
+            sam deploy \
+              --template-file .aws-sam/build/template.yaml \
+              --stack-name "${ADAPTSG_STACK_NAME}" \
+              --region "${AWS_REGION}" \
+              --s3-bucket "${AWS_SAM_ARTIFACT_BUCKET}" \
+              --s3-prefix "deployments/${GITHUB_SHA}" \
+              --role-arn "${AWS_CLOUDFORMATION_ROLE_ARN}" \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --no-confirm-changeset \
+              --no-fail-on-empty-changeset \
+              --parameter-overrides "${parameters[@]}" \
+              --tags Application=AdaptSG Environment=demo
+          }
+
+          # CloudFront assigns its hostname during the first deployment. The
+          # second pass makes that exact origin the API CORS and OAuth target.
+          deploy_stack \
+            "${ADAPTSG_ALLOWED_CORS_ORIGIN}" \
+            "${ADAPTSG_COGNITO_CALLBACK_URL}" \
+            "${ADAPTSG_COGNITO_LOGOUT_URL}"
+          web_app_url=$(aws cloudformation describe-stacks \
             --stack-name "${ADAPTSG_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --s3-bucket "${AWS_SAM_ARTIFACT_BUCKET}" \
-            --s3-prefix "deployments/${GITHUB_SHA}" \
-            --role-arn "${AWS_CLOUDFORMATION_ROLE_ARN}" \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --no-confirm-changeset \
-            --no-fail-on-empty-changeset \
-            --parameter-overrides "${parameters[@]}" \
-            --tags Application=AdaptSG Environment=demo
+            --query "Stacks[0].Outputs[?OutputKey=='WebAppUrl'].OutputValue" \
+            --output text)
+          deploy_stack "${web_app_url}" "${web_app_url}/" "${web_app_url}/"
       - name: Smoke-test Lambda and DynamoDB without Bedrock
         shell: bash
         env:
@@ -278,6 +296,105 @@ jobs:
           aws s3api head-object \
             --bucket "${evidence_bucket}" \
             --key "evals/${GITHUB_SHA}/coverage.xml"
+      - name: Publish static web app and public runtime configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          stack_output() {
+            aws cloudformation describe-stacks \
+              --stack-name "${ADAPTSG_STACK_NAME}" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" \
+              --output text
+          }
+          export ADAPTSG_WEB_APP_URL=$(stack_output WebAppUrl)
+          export ADAPTSG_WEB_BUCKET=$(stack_output WebBucketName)
+          export ADAPTSG_WEB_DISTRIBUTION_ID=$(stack_output WebDistributionId)
+          export ADAPTSG_COGNITO_DOMAIN=$(stack_output CognitoDomain)
+          export ADAPTSG_COGNITO_CLIENT_ID=$(stack_output CognitoClientId)
+          web_source=infra/aws/web
+          if [[ -f public/index.html ]]; then
+            web_source=public
+          fi
+          aws s3 sync "${web_source}/" "s3://${ADAPTSG_WEB_BUCKET}/" \
+            --delete \
+            --sse AES256 \
+            --cache-control "no-cache"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          web_url = os.environ["ADAPTSG_WEB_APP_URL"]
+          domain = os.environ["ADAPTSG_COGNITO_DOMAIN"]
+          config = {
+              "schemaVersion": 1,
+              "apiBaseUrl": "/api",
+              "auth": {
+                  "authorizationEndpoint": f"{domain}/oauth2/authorize",
+                  "clientId": os.environ["ADAPTSG_COGNITO_CLIENT_ID"],
+                  "logoutEndpoint": f"{domain}/logout",
+                  "signInEndpoint": f"{domain}/login",
+                  "signUpEndpoint": f"{domain}/signup",
+                  "redirectUri": f"{web_url}/",
+                  "logoutUri": f"{web_url}/",
+                  "responseType": "code",
+                  "pkceRequired": True,
+                  "scopes": [
+                      "openid",
+                      "email",
+                      "adaptsg/journeys.read",
+                      "adaptsg/journeys.write",
+                      "adaptsg/consents.manage",
+                      "adaptsg/audit.read",
+                  ],
+                  "selfSignUpEnabled": True,
+                  "tokenEndpoint": f"{domain}/oauth2/token",
+              },
+          }
+          Path("runtime-config.json").write_text(
+              json.dumps(config, separators=(",", ":")), encoding="utf-8"
+          )
+          PY
+          aws s3 cp runtime-config.json \
+            "s3://${ADAPTSG_WEB_BUCKET}/runtime-config.json" \
+            --content-type application/json \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --sse AES256
+          invalidation_id=$(aws cloudfront create-invalidation \
+            --distribution-id "${ADAPTSG_WEB_DISTRIBUTION_ID}" \
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text)
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "${ADAPTSG_WEB_DISTRIBUTION_ID}" \
+            --id "${invalidation_id}"
+      - name: Verify the public AWS web URL and same-origin API
+        shell: bash
+        run: |
+          set -euo pipefail
+          web_app_url=$(aws cloudformation describe-stacks \
+            --stack-name "${ADAPTSG_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='WebAppUrl'].OutputValue" \
+            --output text)
+          curl --fail --silent --show-error "${web_app_url}/" --output web-index.html
+          curl --fail --silent --show-error "${web_app_url}/runtime-config.json" \
+            --output deployed-runtime-config.json
+          curl --fail --silent --show-error "${web_app_url}/api/health" \
+            --output web-health-response.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("deployed-runtime-config.json").read_text(encoding="utf-8"))
+          health = json.loads(Path("web-health-response.json").read_text(encoding="utf-8"))
+          assert config["apiBaseUrl"] == "/api", config
+          assert config["auth"]["pkceRequired"] is True, config
+          assert config["auth"]["selfSignUpEnabled"] is True, config
+          assert config["auth"]["signUpEndpoint"].endswith("/signup"), config
+          assert health == {"status": "ok", "mode": "demo", "storage": "dynamodb"}, health
+          assert Path("web-index.html").stat().st_size > 0
+          print("CloudFront web, runtime auth configuration, and same-origin API passed.")
+          PY
       - name: Record deployed resources
         shell: bash
         run: |

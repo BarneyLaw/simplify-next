@@ -7,8 +7,11 @@ are ready.
 
 ## What is provisioned
 
-- an invite-only Cognito user pool and public OAuth client with no embedded client secret;
+- a Cognito user pool with configurable email self-signup and a public OAuth/PKCE client with no
+  embedded client secret;
 - a JWT-authenticated API Gateway HTTP API plus an IAM-only Function URL for CI operations;
+- a private S3 static-web bucket behind CloudFront Origin Access Control, with `/api/*` proxied to
+  API Gateway on the same HTTPS origin;
 - an encrypted, on-demand DynamoDB v2 state table with TTL, point-in-time recovery support,
   optional deletion protection, and retained replacements;
 - a private, encrypted, versioned S3 bucket for curated catalog and evaluation evidence;
@@ -34,8 +37,9 @@ aws sts get-caller-identity --profile workshop
 sam --version
 ```
 
-Use `us-east-1` only if that is the region assigned by the hackathon account. The application
-stack and bootstrap stack must use the same region.
+This project is deployed in `ap-southeast-1`. The application stack, bootstrap stack, S3 buckets,
+Lambda, API Gateway, DynamoDB, and Cognito pool must use that same region. CloudFront is global but
+is still managed by the regional CloudFormation stack.
 
 ## 2. Bootstrap GitHub OIDC once
 
@@ -50,7 +54,7 @@ If it does not exist, omit `ExistingGitHubOidcProviderArn` and the template crea
 ```powershell
 aws cloudformation deploy `
   --profile workshop `
-  --region us-east-1 `
+  --region ap-southeast-1 `
   --stack-name adaptsg-cicd-bootstrap `
   --template-file infra/aws/bootstrap.yaml `
   --capabilities CAPABILITY_NAMED_IAM `
@@ -79,7 +83,7 @@ Copy the bootstrap stack outputs into GitHub Actions environment variables:
 | GitHub variable | Bootstrap output / value |
 |---|---|
 | `AWS_ACCOUNT_ID` | account ID from `sts get-caller-identity` |
-| `AWS_REGION` | `us-east-1` (or the assigned region) |
+| `AWS_REGION` | `ap-southeast-1` |
 | `AWS_DEPLOY_ROLE_ARN` | `GitHubDeployRoleArn` |
 | `AWS_CLOUDFORMATION_ROLE_ARN` | `CloudFormationExecutionRoleArn` |
 | `AWS_SAM_ARTIFACT_BUCKET` | `SamArtifactBucketName` |
@@ -94,7 +98,7 @@ Read the outputs with:
 ```powershell
 aws cloudformation describe-stacks `
   --profile workshop `
-  --region us-east-1 `
+  --region ap-southeast-1 `
   --stack-name adaptsg-cicd-bootstrap `
   --query "Stacks[0].Outputs[*].[OutputKey,OutputValue]" `
   --output table
@@ -130,9 +134,11 @@ contract change recorded at the end of this runbook.
 
 Every push to `main` first runs correctness, Docker, and SAM gates. If the OIDC variables are
 configured, the `Deploy AWS demo` job then assumes the short-lived deployment role, deploys the
-stack with Bedrock disabled, and invokes a deterministic planning request. That smoke test writes
-and reads the DynamoDB-backed journey path, asserts zero Bedrock tokens, and uploads the exact
-catalog plus commit-scoped coverage evidence to the private S3 bucket.
+stack with Bedrock disabled, and invokes a deterministic planning request. CI creates CloudFront on
+the first pass, then updates CORS and Cognito callback/logout URLs to the assigned CloudFront URL.
+It publishes `public/` when a static UI exists, otherwise the infrastructure placeholder, plus a
+generated `/runtime-config.json`. Smoke tests cover the DynamoDB-backed journey path, zero Bedrock
+tokens, public AWS URL, same-origin health route, and private evidence upload.
 
 For a manual token-free deployment:
 
@@ -141,7 +147,7 @@ sam validate --lint --template-file infra/aws/template.yaml
 sam build --template-file infra/aws/template.yaml
 sam deploy `
   --profile workshop `
-  --region us-east-1 `
+  --region ap-southeast-1 `
   --stack-name adaptsg-demo `
   --s3-bucket <SamArtifactBucketName> `
   --role-arn <CloudFormationExecutionRoleArn> `
@@ -154,6 +160,7 @@ sam deploy `
     AllowedCorsOrigin=https://your-ui.example `
     CognitoCallbackUrl=https://your-ui.example/auth/callback `
     CognitoLogoutUrl=https://your-ui.example/ `
+    EnableSelfSignUp=true `
     BedrockModelArns=DISABLED `
     EnablePointInTimeRecovery=false `
     EnableDeletionProtection=false `
@@ -167,19 +174,20 @@ separate production update with `EnableDeletionProtection=true`. `DeletionPolicy
 
 Do not put temporary AWS credentials or provider values in `--parameter-overrides`.
 
-## 5. Create the first authenticated demo user
+## 5. Login/signup integration contract
 
-The user pool is invite-only. Read its ID and client ID from the stack outputs, then create the
-demo caregiver through **AWS Console -> Cognito -> User pools -> `<stack>-caregivers` -> Users ->
-Create user**. Use a real team email, mark it verified only after confirming ownership, and set a
-temporary password. Do not put a password in Git, GitHub variables, CloudFormation parameters, or
-shell history.
+CI sets `EnableSelfSignUp=true`, so Cognito Managed Login exposes email signup, verification,
+password reset, login, and logout. The template default remains `false` so staging/production are
+invite-only unless explicitly approved. Public signup means anyone who reaches the page can create
+an account; turn it off after the demo if that is not intended.
 
 The browser login must use Cognito authorization code flow with PKCE and send the access token,
 not the ID token, as a bearer token. API Gateway validates the JWT and the route-specific OAuth
 scope before Lambda runs; application code then binds the verified `sub` claim to the journey owner.
-The current browser client does not yet perform this OAuth exchange, so that integration remains
-a Role 3 handoff rather than an AWS credential workaround.
+The UI should load `/runtime-config.json`, generate a fresh PKCE verifier/challenge and OAuth `state`,
+redirect to `authorizationEndpoint`, exchange the returned code at `tokenEndpoint`, and clear local
+tokens before visiting `logoutEndpoint`. The runtime file contains only public identifiers—never a
+client secret. Implementing those browser controls remains the Role 3 handoff.
 
 ## 6. Verify and operate
 
@@ -187,11 +195,14 @@ Confirm the deployed outputs and resource state:
 
 ```powershell
 aws cloudformation describe-stacks --stack-name adaptsg-demo --query "Stacks[0].Outputs" --profile workshop
-aws dynamodb describe-time-to-live --table-name adaptsg-demo-journeys --profile workshop
+aws dynamodb describe-time-to-live --table-name adaptsg-demo-state-v2 --profile workshop
 aws lambda get-function-url-config --function-name adaptsg-demo-api --profile workshop
 aws apigatewayv2 get-apis --profile workshop
 aws cognito-idp list-user-pools --max-results 10 --profile workshop
 ```
+
+Open the `WebAppUrl` output to view the AWS-hosted page. The private web bucket is not a website
+endpoint and is deliberately inaccessible directly; CloudFront is the only public entry point.
 
 The Function URL uses `AWS_IAM`; HTTP callers must sign requests with SigV4 and have both
 `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction`. The CI smoke test invokes the function
@@ -216,9 +227,9 @@ Never replace the ARN list with `*`.
 
 ## 8. Remove resources
 
-Delete the application stack first. The evidence bucket must be empty before CloudFormation can
-delete it. Then empty the SAM artifact bucket and delete the bootstrap stack if CI/CD is no longer
-needed.
+Delete the application stack first. The evidence and web buckets must be empty before CloudFormation
+can delete them. Then empty the SAM artifact bucket and delete the bootstrap stack if CI/CD is no
+longer needed.
 
 ```powershell
 aws cloudformation delete-stack --stack-name adaptsg-demo --profile workshop

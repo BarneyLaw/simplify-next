@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: AdaptSG authenticated production API with Cognito, cost-bounded Lambda, durable journey state, and evidence storage.
+Description: AdaptSG static web app and authenticated API with Cognito, Lambda, durable journey state, and evidence storage.
 
 Parameters:
   EnvironmentName:
@@ -27,6 +27,11 @@ Parameters:
     Default: http://localhost:8501
     Description: Exact browser destination after Cognito logout.
     AllowedPattern: ^https?://[^*]+$
+  EnableSelfSignUp:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Enable Cognito email self-registration for the public demo; keep disabled for invite-only environments.
   ApiThrottleBurstLimit:
     Type: Number
     Default: 10
@@ -100,6 +105,7 @@ Conditions:
   PointInTimeRecoveryEnabled: !Equals [!Ref EnablePointInTimeRecovery, "true"]
   DeletionProtectionEnabled: !Equals [!Ref EnableDeletionProtection, "true"]
   HasLambdaReservedConcurrency: !Not [!Equals [!Ref LambdaReservedConcurrency, -1]]
+  SelfSignUpEnabled: !Equals [!Ref EnableSelfSignUp, "true"]
 
 Globals:
   Function:
@@ -153,7 +159,7 @@ Resources:
       UsernameConfiguration:
         CaseSensitive: false
       AdminCreateUserConfig:
-        AllowAdminCreateUserOnly: true
+        AllowAdminCreateUserOnly: !If [SelfSignUpEnabled, false, true]
       AccountRecoverySetting:
         RecoveryMechanisms:
           - Name: verified_email
@@ -310,6 +316,125 @@ Resources:
             Resource:
               - !GetAtt EvidenceBucket.Arn
               - !Sub "${EvidenceBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  WebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::AccountId}-${AWS::Region}-${AWS::StackName}-web"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldWebVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  WebOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Description: !Sub "Private S3 origin for ${AWS::StackName}"
+        Name: !Sub "${AWS::StackName}-web-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  WebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "${AWS::StackName} static web app and API"
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        Origins:
+          - DomainName: !GetAtt WebBucket.RegionalDomainName
+            Id: WebBucketOrigin
+            OriginAccessControlId: !GetAtt WebOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+          - CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+            DomainName: !Sub "${AdaptSgHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+            Id: ApiGatewayOrigin
+        DefaultCacheBehavior:
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD, OPTIONS]
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03
+          TargetOriginId: WebBucketOrigin
+          ViewerProtocolPolicy: redirect-to-https
+        CacheBehaviors:
+          - AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD, OPTIONS]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            Compress: true
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+            PathPattern: /api/*
+            ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03
+            TargetOriginId: ApiGatewayOrigin
+            ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${WebBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}"
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt WebBucket.Arn
+              - !Sub "${WebBucket.Arn}/*"
             Condition:
               Bool:
                 aws:SecureTransport: "false"
@@ -660,6 +785,15 @@ Resources:
         }
 
 Outputs:
+  WebAppUrl:
+    Description: Public CloudFront URL for the static browser application.
+    Value: !Sub "https://${WebDistribution.DomainName}"
+  WebBucketName:
+    Description: Private deployment bucket for static web assets.
+    Value: !Ref WebBucket
+  WebDistributionId:
+    Description: CloudFront distribution ID used for deployment invalidations.
+    Value: !Ref WebDistribution
   AdaptSgHttpApiUrl:
     Description: Authenticated production HTTP API URL.
     Value: !Sub https://${AdaptSgHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}

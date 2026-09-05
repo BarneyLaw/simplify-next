@@ -108,34 +108,39 @@ flowchart TB
     subgraph Local[Local / container]
       ST[Streamlit :8501] --> CORE[Python core]
     end
-    subgraph Vercel[Vercel mode]
-      VF[Python FastAPI Function, JSON API only] --> CORE2[Python core]
-    end
     subgraph AWS[AWS serverless mode]
-      CI[GitHub OIDC CI/CD] --> S3[Private S3 evidence bucket]
-      CI --> LF
-      IAM[IAM / SigV4 caller] --> URL[Lambda Function URL]
-      URL --> LF[Lambda + Mangum/FastAPI]
+      CI[GitHub OIDC CI/CD] --> WB[Private S3 web bucket]
+      WB --> CF[CloudFront HTTPS URL]
+      USER[Caregiver browser] --> CF
+      USER --> COG[Cognito Managed Login + PKCE]
+      CF --> APIGW[API Gateway /api/*]
+      COG --> APIGW
+      APIGW --> LF[Lambda + Mangum/FastAPI]
       LF --> DB[DynamoDB journey state + TTL]
       LF -. disabled by default .-> BR[Amazon Bedrock]
       LF --> EXT[Singapore public APIs]
       LF --> CW[CloudWatch EMF, logs, alarms + X-Ray]
+      CI --> S3[Private S3 evidence bucket]
     end
 ```
 
-Streamlit is not deployed directly to Vercel because it expects a persistent Python process and WebSocket session. Vercel instead hosts a Python FastAPI function — a JSON API only, with no bundled browser page — backed by the same service. Docker remains the full caregiver-facing Streamlit path.
+Streamlit remains the local/container interface because it requires a persistent Python process and
+WebSocket session; it cannot be exported as a static site. The AWS browser interface is a separate
+static client supplied by Role 3 and published from `public/` by CI.
 
-The AWS SAM template uses an `AWS_IAM` Function URL, exact-origin CORS, reserved concurrency,
-an on-demand DynamoDB table and private S3. GitHub Actions assumes a repository-scoped OIDC role
-and delegates provisioning to a dedicated CloudFormation execution role. Browser clients must use
-a trusted SigV4-capable identity layer; AWS does not expose an unauthenticated production URL.
+The AWS SAM template uses CloudFront with private S3 Origin Access Control, a Cognito-scoped HTTP
+API, an operations-only `AWS_IAM` Function URL, exact-origin CORS, reserved concurrency, on-demand
+DynamoDB, and private evidence S3. GitHub Actions assumes a repository/environment-scoped OIDC role
+and delegates provisioning to a dedicated CloudFormation execution role.
 
 ## Current versus planned AWS services
 
 Implemented:
 
 - optional Amazon Bedrock on-demand inference with exact model resources and a disabled default;
-- IAM-authenticated Lambda Function URL deployment with restricted CORS;
+- public CloudFront HTTPS delivery for private static assets and same-origin `/api/*` proxying;
+- Cognito Managed Login with authorization-code/PKCE and configurable verified-email signup;
+- OAuth-scoped API Gateway HTTP API plus an IAM-authenticated operations Function URL;
 - DynamoDB on-demand storage for versioned journey state and idempotency, with TTL;
 - private encrypted/versioned S3 storage for catalog and evaluation artifacts;
 - Secrets Manager dynamic references for optional provider values;
@@ -145,7 +150,7 @@ Implemented:
 
 Remaining production hardening:
 
-- add a user-facing identity broker before connecting a browser directly to the IAM URL;
+- implement the static browser OAuth/PKCE controls against `/runtime-config.json` (Role 3 handoff);
 - define per-user authorization and deletion/retention policy beyond the current TTL;
 - add an independent runtime switch for live Singapore providers without attempting Bedrock;
 - wire alarm actions to an approved notification target.

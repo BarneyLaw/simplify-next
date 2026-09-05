@@ -97,7 +97,9 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert "ReservedConcurrentExecutions: !If" in template
     assert "Type: AWS::CloudWatch::Dashboard" in template
     assert "Type: AWS::Cognito::UserPool" in template
-    assert "AllowAdminCreateUserOnly: true" in template
+    assert "EnableSelfSignUp:" in template
+    assert 'Default: "false"' in template
+    assert "AllowAdminCreateUserOnly: !If [SelfSignUpEnabled, false, true]" in template
     assert "EnabledMfas:" in template
     assert "SOFTWARE_TOKEN_MFA" in template
     assert "SoftwareTokenMfaConfiguration" not in template
@@ -122,6 +124,13 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert "production.invalid" not in template
     assert "SecretString:ONEMAP_API_TOKEN" in template
     assert "SecretString:LTA_ACCOUNT_KEY" in template
+    assert "WebBucket:" in template
+    assert "Type: AWS::CloudFront::OriginAccessControl" in template
+    assert "SigningBehavior: always" in template
+    assert "Type: AWS::CloudFront::Distribution" in template
+    assert "PathPattern: /api/*" in template
+    assert "OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac" in template
+    assert "Principal:\n              Service: cloudfront.amazonaws.com" in template
 
 
 def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
@@ -132,9 +141,14 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert '"BedrockModelArns=DISABLED"' in workflow
     assert '"LambdaReservedConcurrency=-1"' in workflow
     assert '"EnableDeletionProtection=false"' in workflow
-    assert '"CognitoCallbackUrl=${ADAPTSG_COGNITO_CALLBACK_URL}"' in workflow
-    assert '"CognitoLogoutUrl=${ADAPTSG_COGNITO_LOGOUT_URL}"' in workflow
+    assert '"EnableSelfSignUp=true"' in workflow
+    assert 'deploy_stack "${web_app_url}" "${web_app_url}/" "${web_app_url}/"' in workflow
     assert "Verify public health and protected user routes" in workflow
+    assert "Publish static web app and public runtime configuration" in workflow
+    assert "runtime-config.json" in workflow
+    assert "web_source=public" in workflow
+    assert "cloudfront create-invalidation" in workflow
+    assert "Verify the public AWS web URL and same-origin API" in workflow
     assert '[[ "${protected_status}" == "401" ]]' in workflow
     assert "AWS_ACCESS_KEY_ID" not in workflow
     assert "sts:AssumeRoleWithWebIdentity" in bootstrap
@@ -147,6 +161,9 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert "cloudformation:CreateChangeSet" in execution_role
     assert "aws:transform/Serverless-2016-10-31" in execution_role
     assert "cognito-idp:CreateUserPool" in execution_role
+    assert "cloudfront:CreateDistribution" in execution_role
+    assert "cloudfront:CreateDistributionWithTags" in execution_role
+    assert "cloudfront:CreateOriginAccessControl" in execution_role
     assert "apigateway:TagResource" in execution_role
     assert "apigateway:UntagResource" in execution_role
     assert "apigateway:POST" in execution_role
@@ -164,3 +181,17 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
         "logs:UpdateLogDelivery",
     ):
         assert logs_action in execution_role
+
+    deploy_role = bootstrap.split("GitHubDeployRole:", 1)[1].split("Outputs:", 1)[0]
+    assert "PublishStaticWebAssets" in deploy_role
+    assert "cloudfront:CreateInvalidation" in deploy_role
+    assert "cloudfront:GetInvalidation" in deploy_role
+
+
+def test_static_web_placeholder_is_infrastructure_only_and_runtime_config_driven() -> None:
+    placeholder = (REPOSITORY_ROOT / "infra" / "aws" / "web" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert "ready to be published by the UI team" in placeholder
+    assert 'href="/api/health"' in placeholder
+    assert "runtime-config.json" not in placeholder
