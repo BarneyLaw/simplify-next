@@ -80,6 +80,12 @@ Resources:
 
   CloudFormationExecutionRole:
     Type: AWS::IAM::Role
+    Metadata:
+      cfn-lint:
+        config:
+          # AWS evaluates API Gateway V2 tag calls with these action names, but
+          # cfn-lint 1.56 still reports the known W3037 false positive.
+          ignore_checks: [W3037]
     Properties:
       RoleName: !Sub "${ApplicationStackName}-cfn-execution"
       AssumeRolePolicyDocument:
@@ -182,6 +188,8 @@ Resources:
               - Sid: ManageAuthenticatedHttpApi
                 Effect: Allow
                 Action:
+                  - apigateway:TagResource
+                  - apigateway:UntagResource
                   - apigateway:DELETE
                   - apigateway:GET
                   - apigateway:PATCH

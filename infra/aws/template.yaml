@@ -17,6 +17,26 @@ Parameters:
     Default: http://localhost:8501
     AllowedPattern: ^https?://[^*]+$
     Description: Exact trusted browser origin; wildcards are rejected.
+  CognitoCallbackUrl:
+    Type: String
+    Default: http://localhost:8501
+    Description: Exact browser OAuth callback URL, including its callback path when used.
+    AllowedPattern: ^https?://[^*]+$
+  CognitoLogoutUrl:
+    Type: String
+    Default: http://localhost:8501
+    Description: Exact browser destination after Cognito logout.
+    AllowedPattern: ^https?://[^*]+$
+  ApiThrottleBurstLimit:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 1000
+  ApiThrottleRateLimit:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 1000
   ProviderSecretName:
     Type: String
     Default: ""
@@ -32,6 +52,11 @@ Parameters:
     Type: String
     Default: "true"
     AllowedValues: ["true", "false"]
+  EnableDeletionProtection:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Enable only after initial deployment and restore verification are complete.
   LambdaReservedConcurrency:
     Type: Number
     Default: 5
@@ -73,6 +98,7 @@ Conditions:
   BedrockInferenceEnabled: !Not
     - !Equals [!Join ["", !Ref BedrockModelArns], DISABLED]
   PointInTimeRecoveryEnabled: !Equals [!Ref EnablePointInTimeRecovery, "true"]
+  DeletionProtectionEnabled: !Equals [!Ref EnableDeletionProtection, "true"]
   HasLambdaReservedConcurrency: !Not [!Equals [!Ref LambdaReservedConcurrency, -1]]
 
 Globals:
@@ -176,8 +202,8 @@ Resources:
         - adaptsg/consents.manage
         - adaptsg/audit.read
       SupportedIdentityProviders: [COGNITO]
-      CallbackURLs: [!Ref AllowedCorsOrigin]
-      LogoutURLs: [!Ref AllowedCorsOrigin]
+      CallbackURLs: [!Ref CognitoCallbackUrl]
+      LogoutURLs: [!Ref CognitoLogoutUrl]
 
   AdaptSgResourceServer:
     Type: AWS::Cognito::UserPoolResourceServer
@@ -225,7 +251,7 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: expires_at
         Enabled: true
-      DeletionProtectionEnabled: true
+      DeletionProtectionEnabled: !If [DeletionProtectionEnabled, true, false]
       Tags:
         - Key: adaptsg-schema-version
           Value: "1"
@@ -299,10 +325,34 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  AdaptSgApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}-http-api"
+      RetentionInDays: 14
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
   AdaptSgHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: $default
+      FailOnWarnings: true
+      PropagateTags: true
+      Tags:
+        Application: AdaptSG
+        Environment: !Ref EnvironmentName
+      AccessLogSettings:
+        DestinationArn: !GetAtt AdaptSgApiAccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency"}
+      DefaultRouteSettings:
+        DetailedMetricsEnabled: true
+        ThrottlingBurstLimit: !Ref ApiThrottleBurstLimit
+        ThrottlingRateLimit: !Ref ApiThrottleRateLimit
       Auth:
         DefaultAuthorizer: CognitoJwtAuthorizer
         Authorizers:
@@ -383,12 +433,159 @@ Resources:
             Method: GET
             Auth:
               Authorizer: NONE
-        Api:
+        CreateJourney:
           Type: HttpApi
           Properties:
             ApiId: !Ref AdaptSgHttpApi
-            Path: /{proxy+}
-            Method: ANY
+            Path: /api/journeys
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        LegacyPlan:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/plan
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        LegacyReplan:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/replan
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        ReadJourney:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.read]
+        ReplanJourney:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}/replan
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        DecideJourney:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}/decision
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        MonitorJourney:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}/monitor
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        CreateActionIntent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}/action-intents
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        CreateConsent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/consents
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        ConsentStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/consents/journey-planning/status
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        ReadConsent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/consents/{consent_id}
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        RevokeConsent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/consents/{consent_id}/revoke
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        CreateAuthorityGrant:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/authority-grants
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        ReadAuthorityGrant:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/authority-grants/{subject}
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        RevokeAuthorityGrant:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/authority-grants/{subject}/revoke
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        ReadAuditEvents:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/audit-events
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/audit.read]
+        ReadJourneyAuditEvents:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}/audit-events
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/audit.read]
       FunctionUrlConfig:
         AuthType: AWS_IAM
         InvokeMode: BUFFERED

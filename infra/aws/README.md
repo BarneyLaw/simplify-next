@@ -10,7 +10,7 @@ are ready.
 - an invite-only Cognito user pool and public OAuth client with no embedded client secret;
 - a JWT-authenticated API Gateway HTTP API plus an IAM-only Function URL for CI operations;
 - an encrypted, on-demand DynamoDB v2 state table with TTL, point-in-time recovery support,
-  deletion protection, and retained replacements;
+  optional deletion protection, and retained replacements;
 - a private, encrypted, versioned S3 bucket for curated catalog and evaluation evidence;
 - a least-privilege Lambda role, X-Ray tracing, 14-day logs, alarms, and a dashboard;
 - a separate bootstrap stack for GitHub OIDC, the SAM artifact bucket, and deployment roles.
@@ -85,6 +85,8 @@ Copy the bootstrap stack outputs into GitHub Actions environment variables:
 | `AWS_SAM_ARTIFACT_BUCKET` | `SamArtifactBucketName` |
 | `ADAPTSG_STACK_NAME` | `adaptsg-demo` |
 | `ADAPTSG_ALLOWED_CORS_ORIGIN` | exact trusted UI origin, never `*` |
+| `ADAPTSG_COGNITO_CALLBACK_URL` | exact OAuth callback URL; may include a callback path |
+| `ADAPTSG_COGNITO_LOGOUT_URL` | exact browser destination after logout |
 | `ADAPTSG_PROVIDER_SECRET_NAME` | leave empty until `adaptsg/demo/providers` exists |
 
 Read the outputs with:
@@ -150,10 +152,18 @@ sam deploy `
     EnvironmentName=demo `
     ApplicationMode=demo `
     AllowedCorsOrigin=https://your-ui.example `
+    CognitoCallbackUrl=https://your-ui.example/auth/callback `
+    CognitoLogoutUrl=https://your-ui.example/ `
     BedrockModelArns=DISABLED `
     EnablePointInTimeRecovery=false `
+    EnableDeletionProtection=false `
     LambdaReservedConcurrency=-1
 ```
+
+Keep deletion protection disabled for the first deployment so CloudFormation can roll back a
+partially created table. After the stack and restore procedure have been verified, enable it in a
+separate production update with `EnableDeletionProtection=true`. `DeletionPolicy: Retain` and
+`UpdateReplacePolicy: Retain` continue to preserve an established table during stack replacement.
 
 Do not put temporary AWS credentials or provider values in `--parameter-overrides`.
 
@@ -165,8 +175,9 @@ Create user**. Use a real team email, mark it verified only after confirming own
 temporary password. Do not put a password in Git, GitHub variables, CloudFormation parameters, or
 shell history.
 
-The browser login must use Cognito authorization code flow with PKCE. API Gateway validates the
-JWT before Lambda runs; application code then binds the verified `sub` claim to the journey owner.
+The browser login must use Cognito authorization code flow with PKCE and send the access token,
+not the ID token, as a bearer token. API Gateway validates the JWT and the route-specific OAuth
+scope before Lambda runs; application code then binds the verified `sub` claim to the journey owner.
 The current browser client does not yet perform this OAuth exchange, so that integration remains
 a Role 3 handoff rather than an AWS credential workaround.
 
