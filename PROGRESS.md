@@ -35,6 +35,10 @@ before the production-hardening changes: 163 tests passed with 90.50% branch cov
 the local Python 3.13.7 virtual environment. This is not a completed Python 3.12 full-gate
 result.
 
+After the trust-foundation changes, the local Python 3.13.7 full gate observed 170 tests
+passing with 90.28% branch coverage. The dependency audit found no known vulnerabilities.
+SAM CLI and Python 3.12 are not installed in this workspace, so those checks remain pending.
+
 | Check | Result | Evidence |
 |---|---:|---|
 | Tests | 163 passed | `.venv/bin/python -m pytest -q` under Python 3.13.7 |
