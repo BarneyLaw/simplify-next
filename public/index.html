@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AdaptSG - Vercel demo</title>
+  <title>AdaptSG - Live journey planner</title>
   <style>
     :root { color-scheme: light; --ink:#0f172a; --teal:#0f766e; --pale:#f0fdfa; --line:#cbd5e1; --warn:#92400e; }
     * { box-sizing: border-box; }
@@ -50,7 +50,7 @@
   <section class="card" aria-labelledby="plan-title">
     <h2 id="plan-title">Plan the day</h2>
     <label for="prompt">Traveller and constraints</label>
-    <textarea id="prompt">Plan a 10 am-5 pm day for me and my 72-year-old mother, starting from Toa Payoh. She uses a wheelchair, should not walk more than 400 metres at once, needs lunch before 1 pm, and we have a $70 transport and activity budget. We would like to visit Gardens by the Bay.</textarea>
+    <textarea id="prompt" placeholder="Describe the traveller, timing and constraints."></textarea>
     <label for="journey-date">Journey date</label>
     <input id="journey-date" type="date">
     <button id="create">Create safe plan</button>
@@ -71,10 +71,8 @@
       <div id="decision"></div>
     </div>
     <div class="card" id="events" hidden>
-      <h2>Five-minute demo events</h2>
+      <h2>Live conditions</h2>
       <button id="monitor">Check conditions</button>
-      <button id="rain">Heavy rain + flood</button>
-      <button id="fatigue">Mum is more tired</button>
       <div id="conditions" aria-live="polite"></div>
       <div id="proposal" aria-live="polite"></div>
     </div>
@@ -90,11 +88,8 @@
   let version = null;
   let journeyStatus = null;
   let decisionTargetId = null;
-  let runtimeMode = 'demo';
+  let runtimeMode = 'live';
   let planAttempt = 0;
-  // Derived from what is on screen purely to describe the disruption. A trigger is
-  // caregiver-reported input; the server still owns and revalidates the plan.
-  let outdoorVenueIds = [];
 
   const tomorrow = new Date(Date.now() + 86400000);
   $('journey-date').value = tomorrow.toISOString().slice(0, 10);
@@ -234,7 +229,6 @@
       <td>${safe(money(segment.route.estimated_cost_sgd + segment.venue.estimated_cost_sgd))}</td>
       <td>${safe(segment.venue.accessibility_status)}</td></tr>`).join('');
     $('source').textContent = `${provenance(plan, runtimeMode)} Constraint parser: ${plan.parser_source}.`;
-    outdoorVenueIds = plan.segments.filter((segment) => !segment.venue.indoor).map((segment) => segment.venue.id);
   }
 
   // A draft plan is not an accepted plan. The caregiver decides, and only the server
@@ -333,18 +327,19 @@
   $('monitor').onclick = () => guarded(async () => {
     const outcome = await mutate(`/api/journeys/${journeyId}/monitor`, null, actionKey());
     const triggers = outcome.triggers.length
-      ? outcome.triggers.map((trigger) => `<p>${safe(trigger.message)}</p>`).join('')
+      ? outcome.triggers.map((trigger, index) => `<p>${safe(trigger.message)} <button data-trigger-index="${index}">Review live adjustment</button></p>`).join('')
       : '<p>No monitored condition currently affects this itinerary.</p>';
     $('conditions').innerHTML = `<div class="status">
       <h3 id="conditions-title" tabindex="-1">Conditions</h3>
       <p>${safe(outcome.snapshot.weather_summary)}; 24-hour PSI ${safe(outcome.snapshot.psi)}.</p>
       <p><small>${safe(conditionsProvenance(outcome.snapshot, runtimeMode))}</small></p>
       ${triggers}</div>`;
+    outcome.triggers.forEach((trigger, index) => {
+      const button = $('conditions').querySelector(`[data-trigger-index="${index}"]`);
+      if (button) button.onclick = () => replan(trigger);
+    });
     $('conditions-title').focus();
   });
-
-  $('rain').onclick = () => replan({type:'flood_alert',message:'Heavy rain began and a flood alert affects an outdoor segment.',affected_venue_ids:outdoorVenueIds});
-  $('fatigue').onclick = () => replan({type:'fatigue',message:'Mum is more tired than expected; shorten travel and add rest.'});
 
   read('/api/health').then(data => {
     runtimeMode = data.mode;

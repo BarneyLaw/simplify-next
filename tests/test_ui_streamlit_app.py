@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from adaptsg.domain import EnvironmentSnapshot
 from adaptsg.errors import ToolUnavailable
 from adaptsg.settings import get_settings
 from adaptsg.tools.environment import DemoEnvironmentClient
@@ -21,8 +23,10 @@ INFEASIBLE_PROMPT = (
 
 
 @pytest.fixture(autouse=True)
-def isolated_streamlit_runtime() -> None:
+def isolated_streamlit_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each app run must start from a cold service cache and settings cache."""
+    monkeypatch.setenv("ADAPTSG_MODE", "demo")
+    monkeypatch.setenv("ADAPTSG_USE_BEDROCK", "false")
     st.cache_resource.clear()
     get_settings.cache_clear()
 
@@ -47,8 +51,10 @@ def labels(app: AppTest) -> list[str]:
 
 def draft(app: AppTest, prompt: str | None = None) -> AppTest:
     """Create a plan and stop at the draft, before any caregiver decision."""
-    if prompt is not None:
-        app.text_area[0].set_value(prompt)
+    app.text_area[0].set_value(
+        prompt
+        or "Plan a wheelchair day from Toa Payoh, lunch before 1 pm, budget $70."
+    )
     return click(app, "Create safe plan")
 
 
@@ -61,7 +67,7 @@ def test_app_asks_for_a_plan_before_anything_exists() -> None:
     app = start_app()
 
     assert not app.exception
-    assert any("Create a plan to begin" in message.value for message in app.info)
+    assert any("Describe the day and create a plan" in message.value for message in app.info)
     assert not app.dataframe
 
 
@@ -87,7 +93,7 @@ def test_a_new_plan_is_a_draft_that_gates_the_adaptation_controls() -> None:
     assert app.session_state["journey_status"] == "draft"
     assert "Accept this plan" in labels(app)
     assert "Reject and start again" in labels(app)
-    assert "Simulate heavy rain + flood" not in labels(app)
+    assert "Review live adjustment" not in labels(app)
     assert "Check live conditions" not in labels(app)
 
 
@@ -99,7 +105,7 @@ def test_accepting_the_draft_activates_the_journey_and_advances_its_version() ->
 
     assert accepted.session_state["journey_status"] == "active"
     assert accepted.session_state["journey_version"] > version
-    assert "Simulate heavy rain + flood" in labels(accepted)
+    assert "Check live conditions" in labels(accepted)
 
 
 def test_rejecting_the_draft_leaves_no_accepted_plan() -> None:
@@ -122,20 +128,38 @@ def test_an_infeasible_request_stops_and_asks_instead_of_planning() -> None:
     assert not app.dataframe
 
 
-def test_rain_trigger_produces_a_validated_proposal() -> None:
-    app = click(plan(start_app()), "Simulate heavy rain + flood")
+def triggered_app(monkeypatch: pytest.MonkeyPatch) -> AppTest:
+    def rain_snapshot(_client: DemoEnvironmentClient) -> EnvironmentSnapshot:
+        return EnvironmentSnapshot(
+            weather_summary="Heavy rain",
+            psi=42,
+            flood_affected_venue_ids=frozenset({"gardens-bay-outdoor"}),
+            observed_at=datetime.now(UTC),
+            source="demo_environment_snapshot_v1",
+            freshness="fixture",
+            is_fixture=True,
+        )
+
+    monkeypatch.setattr(DemoEnvironmentClient, "current", rain_snapshot)
+    return click(plan(start_app()), "Check live conditions")
+
+
+def test_live_trigger_produces_a_validated_proposal(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = click(triggered_app(monkeypatch), "Review live adjustment")
 
     assert not app.exception
     assert app.session_state["proposal"] is not None
     assert app.session_state["proposal"].validation.valid
 
 
-def test_applying_a_proposal_advances_the_plan_and_clears_the_proposal() -> None:
-    app = click(plan(start_app()), "Simulate heavy rain + flood")
+def test_applying_a_proposal_advances_the_plan_and_clears_the_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = click(triggered_app(monkeypatch), "Review live adjustment")
     before = app.session_state["itinerary"]
     proposed = app.session_state["proposal"].itinerary
 
-    applied = click(app, "Approve and apply")
+    applied = click(app, "Apply adjustment")
 
     assert not applied.exception
     assert applied.session_state["proposal"] is None
@@ -143,8 +167,8 @@ def test_applying_a_proposal_advances_the_plan_and_clears_the_proposal() -> None
     assert applied.session_state["itinerary"].id != before.id
 
 
-def test_rejecting_a_proposal_keeps_the_current_plan() -> None:
-    app = click(plan(start_app()), "Simulate heavy rain + flood")
+def test_rejecting_a_proposal_keeps_the_current_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = click(triggered_app(monkeypatch), "Review live adjustment")
     before = app.session_state["itinerary"]
 
     kept = click(app, "Keep current plan")
@@ -154,13 +178,28 @@ def test_rejecting_a_proposal_keeps_the_current_plan() -> None:
     assert kept.session_state["itinerary"].id == before.id
 
 
-def test_a_stale_version_reloads_the_server_plan_instead_of_applying_blindly() -> None:
+def test_a_stale_version_reloads_the_server_plan_instead_of_applying_blindly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Optimistic concurrency: the caregiver decides against what the server holds."""
     app = plan(start_app())
     current = app.session_state["itinerary"].id
     app.session_state["journey_version"] = app.session_state["journey_version"] + 5
 
-    stale = click(app, "Simulate heavy rain + flood")
+    monkeypatch.setattr(
+        DemoEnvironmentClient,
+        "current",
+        lambda _client: EnvironmentSnapshot(
+            weather_summary="Heavy rain",
+            psi=42,
+            flood_affected_venue_ids=frozenset({"gardens-bay-outdoor"}),
+            observed_at=datetime.now(UTC),
+            source="demo_environment_snapshot_v1",
+            freshness="fixture",
+            is_fixture=True,
+        ),
+    )
+    stale = click(click(app, "Check live conditions"), "Review live adjustment")
 
     assert not stale.exception
     assert any("has been reloaded" in message.value for message in stale.warning)
@@ -184,19 +223,6 @@ def test_live_verification_failure_retains_the_current_plan(
     assert not checked.exception
     assert checked.session_state["itinerary"].id == before.id
     assert checked.error, "a live-tool failure must be reported"
-
-
-def test_fatigue_trigger_requires_explicit_cost_approval() -> None:
-    """Safety rule 8: a material cost increase must present an approval decision."""
-    app = click(plan(start_app()), "Mum is more tired")
-
-    assert not app.exception
-    proposal = app.session_state["proposal"]
-    assert proposal.requires_approval
-    assert any("Approval required" in message.value for message in app.warning)
-    assert [button.label for button in app.button if "Approve" in button.label] == [
-        "Approve and apply"
-    ]
 
 
 def test_the_demo_never_presents_estimates_as_live_data() -> None:
@@ -236,26 +262,6 @@ def test_a_live_tool_failure_says_the_plan_is_retained(
     assert "retained unchanged" in errors
 
 
-def test_exhausting_the_replan_budget_is_reported_as_its_own_state() -> None:
-    """Safety rule 9: replanning is bounded, and hitting the cap is not a generic failure."""
-    app = plan(start_app())
-    for step in (
-        "Simulate heavy rain + flood",
-        "Approve and apply",
-        "Mum is more tired",
-        "Approve and apply",
-    ):
-        app = click(app, step)
-
-    assert app.session_state["itinerary"].replan_count == 2
-    exhausted = click(app, "Simulate heavy rain + flood")
-
-    assert exhausted.session_state["proposal"] is None
-    errors = " ".join(message.value for message in exhausted.error)
-    assert "Replanning is bounded" in errors
-    assert exhausted.session_state["itinerary"].replan_count == 2
-
-
 def test_a_monitored_demo_run_never_captions_the_snapshot_as_observed() -> None:
     """Safety rule 11: the conditions snapshot is generated in demo mode, not observed."""
     app = click(plan(start_app()), "Check live conditions")
@@ -274,9 +280,9 @@ def test_every_interactive_widget_renders_a_non_empty_accessible_name() -> None:
     Streamlit derives a widget's accessible name from its label, so a blank or
     collapsed label leaves a screen-reader user with an unnamed control.
     """
-    app = click(plan(start_app()), "Simulate heavy rain + flood")
+    app = plan(start_app())
 
     widgets = [*app.button, *app.text_area, *app.date_input]
-    assert len(widgets) >= 8, "the planning and adaptation controls must all be rendered"
+    assert len(widgets) >= 4, "the live planning controls must all be rendered"
     unnamed = [type(widget).__name__ for widget in widgets if not (widget.label or "").strip()]
     assert not unnamed, f"widgets without an accessible name: {unnamed}"

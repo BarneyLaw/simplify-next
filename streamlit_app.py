@@ -1,4 +1,4 @@
-"""AdaptSG Streamlit demo: plan, accept, monitor, explain, approve, and minimally replan."""
+"""AdaptSG Streamlit app: plan, accept, monitor, explain, approve, and replan."""
 
 from __future__ import annotations
 
@@ -37,13 +37,6 @@ from adaptsg.presentation import (
     retained_segment_percentage,
 )
 from adaptsg.settings import get_settings
-
-SAMPLE_PROMPT = (
-    "Plan a 10 am-5 pm day for me and my 72-year-old mother, starting from Toa Payoh. "
-    "She uses a wheelchair, should not walk more than 400 metres at once, needs lunch "
-    "before 1 pm, and we have a $70 transport and activity budget. We would like to "
-    "visit Gardens by the Bay."
-)
 
 JOURNEY_KEYS = ("journey_id", "journey_version", "journey_status", "itinerary", "proposal")
 
@@ -192,8 +185,10 @@ def render_monitoring(monitoring: MonitoringOutcome, mode: str) -> None:
         f"{environment_provenance_label(snapshot, mode=mode)}"
     )
     if monitoring.triggers:
-        for trigger in monitoring.triggers:
+        for index, trigger in enumerate(monitoring.triggers):
             st.warning(trigger.message)
+            if st.button("Review live adjustment", key=f"review-live-adjustment-{index}"):
+                propose(trigger)
     else:
         st.success("No monitored condition currently affects this itinerary.")
 
@@ -292,6 +287,9 @@ def check_conditions() -> None:
 
 
 def create_plan(prompt: str, journey_date: date) -> None:
+    if not prompt.strip():
+        st.error("Describe the traveller, timing and constraints before planning.")
+        return
     previous = state_value("plan_attempt")
     attempt = (previous if isinstance(previous, int) else 0) + 1
     st.session_state.plan_attempt = attempt
@@ -305,33 +303,10 @@ def create_plan(prompt: str, journey_date: date) -> None:
     )
 
 
-def render_adaptation_controls(itinerary: Itinerary) -> None:
-    st.subheader("Monitor and adapt")
-    monitor_col, rain_col, fatigue_col = st.columns(3)
-    if monitor_col.button(
-        "Check live conditions", use_container_width=True, key="check-conditions"
-    ):
+def render_adaptation_controls() -> None:
+    st.subheader("Monitor live conditions")
+    if st.button("Check live conditions", use_container_width=True, key="check-conditions"):
         check_conditions()
-    if rain_col.button(
-        "Simulate heavy rain + flood", use_container_width=True, key="simulate-rain"
-    ):
-        outdoor_ids = frozenset(
-            segment.venue.id for segment in itinerary.segments if not segment.venue.indoor
-        )
-        propose(
-            ReplanTrigger(
-                type=TriggerType.FLOOD_ALERT,
-                message="Heavy rain began and a flood alert affects an outdoor segment.",
-                affected_venue_ids=outdoor_ids,
-            )
-        )
-    if fatigue_col.button("Mum is more tired", use_container_width=True, key="simulate-fatigue"):
-        propose(
-            ReplanTrigger(
-                type=TriggerType.FATIGUE,
-                message="Mum is more tired than expected; shorten travel and add rest.",
-            )
-        )
 
 
 def main() -> None:
@@ -363,7 +338,7 @@ def main() -> None:
 
     prompt = st.text_area(
         "Describe the day and constraints",
-        value=SAMPLE_PROMPT,
+        placeholder="Describe the traveller, timing and constraints.",
         height=150,
         key="prompt",
     )
@@ -381,7 +356,7 @@ def main() -> None:
         st.info("Plan rejected. Nothing was applied; describe the day again to plan afresh.")
         return
     if not isinstance(status, JourneyStatus) or not isinstance(itinerary_value, Itinerary):
-        st.info("Create a plan to begin the five-minute demo.")
+        st.info("Describe the day and create a plan to begin.")
         return
 
     warnings = state_value("warnings")
@@ -395,7 +370,7 @@ def main() -> None:
         return
 
     render_itinerary(itinerary_value, mode, heading="Current safe itinerary")
-    render_adaptation_controls(itinerary_value)
+    render_adaptation_controls()
 
     monitoring_value = state_value("monitoring")
     if isinstance(monitoring_value, MonitoringOutcome):

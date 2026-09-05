@@ -1,4 +1,4 @@
-"""Environment-backed application configuration with safe demo defaults."""
+"""Environment-backed application configuration for live provider operation."""
 
 from functools import lru_cache
 from typing import Literal
@@ -15,7 +15,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    adaptsg_mode: Literal["demo", "live"] = "demo"
+    adaptsg_mode: Literal["demo", "live"] = "live"
     adaptsg_log_level: str = "INFO"
     aws_region: str = "us-east-1"
     aws_profile: str | None = None
