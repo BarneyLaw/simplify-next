@@ -108,7 +108,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-authenticated-aws-demo` | Reconcile Cognito/API Gateway and owner-scoped v2 state with token-free AWS deployment | Merged; provider credentials intentionally absent |
 | `feature/r4-aws-recovery-hardening` | API Gateway deployment permission, rollback-safe DynamoDB protection and local CloudFormation lint | Merged; second deployment rolled back at access-log activation |
 | `feature/r4-api-log-delivery-permissions` | CloudWatch Logs delivery permissions required by authenticated HTTP API access logging | Locally verified; bootstrap and application deployment passed; merge pending |
-| `feature/r4-aws-web-hosting` | CloudFront/private-S3 static hosting, same-origin API, Cognito self-signup, PKCE runtime contract and CI publishing | Role 4 tests/Ruff/SAM lint pass; full gate reaches 174 passed and 90.46% coverage but one pre-existing Role 3 Streamlit assertion fails; AWS deployment pending |
+| `feature/r4-aws-web-hosting` | CloudFront/private-S3 static hosting, same-origin API, Cognito self-signup, PKCE runtime contract and CI publishing | GitHub correctness, Docker build, and SAM validate/build passed in run `33976120097`; AWS deployment pending IAM bootstrap approval and main merge |
 
 ## External setup still required
 
