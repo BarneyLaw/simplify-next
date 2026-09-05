@@ -10,7 +10,13 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from adaptsg import ui
-from adaptsg.domain import AccessibilityStatus, FreshnessStatus, Itinerary, ItinerarySegment
+from adaptsg.domain import (
+    AccessibilityStatus,
+    EnvironmentSnapshot,
+    FreshnessStatus,
+    Itinerary,
+    ItinerarySegment,
+)
 
 
 def with_segments(itinerary: Itinerary, segments: tuple[ItinerarySegment, ...]) -> Itinerary:
@@ -111,3 +117,30 @@ def test_must_haves_lists_the_rest_interval_as_a_row(itinerary: Itinerary) -> No
 
     assert "Rest break every" in html
     assert f"{itinerary.request.hard.rest_interval_minutes} min" in html
+
+
+def test_conditions_summary_includes_weather_psi_flood_and_transport_signals(
+    itinerary: Itinerary,
+) -> None:
+    snapshot = EnvironmentSnapshot(
+        weather_summary="Windy",
+        psi=93,
+        flood_affected_venue_ids=frozenset({itinerary.segments[-1].venue.id}),
+        disrupted_route_labels=frozenset({"NSL"}),
+        observed_at=datetime(2026, 9, 5, tzinfo=UTC),
+        source="live-test",
+    )
+
+    text = ui.conditions_summary(snapshot, itinerary)
+
+    assert "Windy" in text
+    assert "93 (Moderate)" in text
+    assert "Flood alerts: Gardens by the Bay Outdoor" in text
+    assert "Transport alerts: NSL" in text
+
+
+def test_map_svg_spaces_nearby_stop_labels(itinerary: Itinerary) -> None:
+    html = ui.map_svg(itinerary)
+
+    assert html.count('class="pin ') == len(itinerary.segments) + 1
+    assert 'class="pin pin-right"' in html or 'class="pin pin-left"' in html

@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from adaptsg.domain import (
     AccessibilityStatus,
+    EnvironmentSnapshot,
     HardConstraints,
     Itinerary,
     ItinerarySegment,
@@ -308,6 +309,41 @@ def summary(itinerary: Itinerary, *, show_replans: bool = False) -> str:
     return f'<div class="summary">{"".join(items)}</div>'
 
 
+def _psi_label(psi: int) -> str:
+    if psi <= 50:
+        return "Good"
+    if psi <= 100:
+        return "Moderate"
+    if psi <= 200:
+        return "Unhealthy"
+    if psi <= 300:
+        return "Very unhealthy"
+    return "Hazardous"
+
+
+def conditions_summary(snapshot: EnvironmentSnapshot, itinerary: Itinerary) -> str:
+    """Describe every condition signal currently available to the monitor."""
+    itinerary_ids = {segment.venue.id for segment in itinerary.segments}
+    flood_ids = itinerary_ids & snapshot.flood_affected_venue_ids
+    venue_names = {segment.venue.id: segment.venue.name for segment in itinerary.segments}
+    flood_text = (
+        ", ".join(venue_names[venue_id] for venue_id in sorted(flood_ids))
+        if flood_ids
+        else "none affecting this itinerary"
+    )
+    transport_text = (
+        ", ".join(sorted(snapshot.disrupted_route_labels))
+        if snapshot.disrupted_route_labels
+        else "none reported"
+    )
+    return (
+        f"Conditions: {snapshot.weather_summary}. "
+        f"24-hour PSI {snapshot.psi} ({_psi_label(snapshot.psi)}). "
+        f"Flood alerts: {flood_text}. "
+        f"Transport alerts: {transport_text}."
+    )
+
+
 def _validation_sentence(validation: ValidationResult) -> str:
     if validation.valid:
         return "AdaptSG checked the changed plan against your must-haves. Every one still holds."
@@ -395,7 +431,7 @@ def map_svg(itinerary: Itinerary) -> str:
     span_x = max(max_x - min_x, 1e-9)
     span_y = max(max_y - min_y, 1e-9)
     pad = 0.14
-    positioned = [
+    raw_positioned = [
         (
             label,
             tag,
@@ -404,8 +440,24 @@ def map_svg(itinerary: Itinerary) -> str:
         )
         for (label, _lat, _lng, tag), x, y in zip(points, xs, ys, strict=True)
     ]
+    top_by_index: dict[int, float] = {}
+    next_top = 14.0
+    for index, (_label, _tag, _left, top) in sorted(
+        enumerate(raw_positioned), key=lambda item: item[1][3]
+    ):
+        top_by_index[index] = max(top, next_top)
+        next_top = top_by_index[index] + 16.0
+    if top_by_index:
+        overflow = max(top_by_index.values()) - 86.0
+        if overflow > 0:
+            top_by_index = {index: top - overflow for index, top in top_by_index.items()}
+    positioned = [
+        (label, tag, left, top_by_index[index])
+        for index, (label, tag, left, _top) in enumerate(raw_positioned)
+    ]
     pins = "".join(
-        f'<div class="pin" style="left:{left:.1f}%;top:{top:.1f}%">'
+        f'<div class="pin {"pin-left" if left > 58 else "pin-right"}" '
+        f'style="left:{left:.1f}%;top:{top:.1f}%">'
         f'<b aria-hidden="true">{escape(tag)}</b><span>{escape(label)}</span></div>'
         for label, tag, left, top in positioned
     )
