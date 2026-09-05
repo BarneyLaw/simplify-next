@@ -1,13 +1,16 @@
 # AdaptSG AWS deployment runbook
 
-The AWS deployment is deliberately token-free by default. It creates the Bedrock configuration
-boundary, but `BedrockModelArns=DISABLED` means the Lambda role has no `bedrock:InvokeModel`
-permission. `ApplicationMode=demo` also keeps all planning inputs deterministic.
+The AWS deployment is deliberately token-free by default. `BedrockModelArns=DISABLED` removes
+`bedrock:InvokeModel` from the Lambda role, and `ApplicationMode=demo` keeps routing and
+environment inputs deterministic until the provider credentials and independent Bedrock switch
+are ready.
 
 ## What is provisioned
 
-- a Python 3.12 Lambda with an IAM-authenticated Function URL and exact-origin CORS;
-- an encrypted, on-demand DynamoDB table with TTL for journeys and idempotency records;
+- an invite-only Cognito user pool and public OAuth client with no embedded client secret;
+- a JWT-authenticated API Gateway HTTP API plus an IAM-only Function URL for CI operations;
+- an encrypted, on-demand DynamoDB v2 state table with TTL, point-in-time recovery support,
+  deletion protection, and retained replacements;
 - a private, encrypted, versioned S3 bucket for curated catalog and evaluation evidence;
 - a least-privilege Lambda role, X-Ray tracing, 14-day logs, alarms, and a dashboard;
 - a separate bootstrap stack for GitHub OIDC, the SAM artifact bucket, and deployment roles.
@@ -82,7 +85,7 @@ Copy the bootstrap stack outputs into GitHub Actions environment variables:
 | `AWS_SAM_ARTIFACT_BUCKET` | `SamArtifactBucketName` |
 | `ADAPTSG_STACK_NAME` | `adaptsg-demo` |
 | `ADAPTSG_ALLOWED_CORS_ORIGIN` | exact trusted UI origin, never `*` |
-| `ADAPTSG_PROVIDER_SECRET_NAME` | optional Secrets Manager name |
+| `ADAPTSG_PROVIDER_SECRET_NAME` | leave empty until `adaptsg/demo/providers` exists |
 
 Read the outputs with:
 
@@ -97,14 +100,16 @@ aws cloudformation describe-stacks `
 
 ## 3. Add optional provider secrets
 
-Create one Secrets Manager secret under `adaptsg/`, for example `adaptsg/demo/providers`, with
-this JSON shape:
+No provider secret is required for the first authenticated deterministic deployment. When a key
+arrives, open **AWS Console -> Secrets Manager -> Store a new secret -> Other type of secret** in
+`ap-southeast-1`, choose the plaintext JSON editor, and create `adaptsg/demo/providers` with this
+shape:
 
 ```json
 {
   "ONEMAP_API_TOKEN": "replace in Secrets Manager",
   "LTA_ACCOUNT_KEY": "replace in Secrets Manager",
-  "DATA_GOV_SG_API_KEY": "replace in Secrets Manager"
+  "DATA_GOV_SG_API_KEY": ""
 }
 ```
 
@@ -113,9 +118,11 @@ read `--secret-string` from a local ignored file and securely remove that file a
 `ADAPTSG_PROVIDER_SECRET_NAME` to the secret name, not its ARN or value. CloudFormation resolves
 the secret during deployment; redeploy after rotating it.
 
-The automated demo remains in `ADAPTSG_MODE=demo`, so these live-provider values are connected
-but not called. Turning on live OneMap/LTA/data.gov.sg independently of Bedrock requires the Role
-1 contract change recorded at the end of this runbook.
+Set the GitHub `aws-demo` environment variable
+`ADAPTSG_PROVIDER_SECRET_NAME=adaptsg/demo/providers` only after all JSON keys referenced by the
+stack exist. The automated demo remains in `ADAPTSG_MODE=demo`, so these values are connected but
+not called. Turning on live OneMap/LTA/data.gov.sg independently of Bedrock requires the Role 1
+contract change recorded at the end of this runbook.
 
 ## 4. Deploy
 
@@ -150,7 +157,20 @@ sam deploy `
 
 Do not put temporary AWS credentials or provider values in `--parameter-overrides`.
 
-## 5. Verify and operate
+## 5. Create the first authenticated demo user
+
+The user pool is invite-only. Read its ID and client ID from the stack outputs, then create the
+demo caregiver through **AWS Console -> Cognito -> User pools -> `<stack>-caregivers` -> Users ->
+Create user**. Use a real team email, mark it verified only after confirming ownership, and set a
+temporary password. Do not put a password in Git, GitHub variables, CloudFormation parameters, or
+shell history.
+
+The browser login must use Cognito authorization code flow with PKCE. API Gateway validates the
+JWT before Lambda runs; application code then binds the verified `sub` claim to the journey owner.
+The current browser client does not yet perform this OAuth exchange, so that integration remains
+a Role 3 handoff rather than an AWS credential workaround.
+
+## 6. Verify and operate
 
 Confirm the deployed outputs and resource state:
 
@@ -158,6 +178,8 @@ Confirm the deployed outputs and resource state:
 aws cloudformation describe-stacks --stack-name adaptsg-demo --query "Stacks[0].Outputs" --profile workshop
 aws dynamodb describe-time-to-live --table-name adaptsg-demo-journeys --profile workshop
 aws lambda get-function-url-config --function-name adaptsg-demo-api --profile workshop
+aws apigatewayv2 get-apis --profile workshop
+aws cognito-idp list-user-pools --max-results 10 --profile workshop
 ```
 
 The Function URL uses `AWS_IAM`; HTTP callers must sign requests with SigV4 and have both
@@ -168,7 +190,7 @@ Inspect `<stack-name>-operations` in CloudWatch. The Lambda emits low-cardinalit
 request latency/errors, validated itineraries, retained segments, tool verification, loop-cap
 hits, replans, and Bedrock tokens. It never emits prompts, journey IDs, or response bodies.
 
-## 6. Enable Bedrock later
+## 7. Enable Bedrock later
 
 Do not change this during the token-constrained phase. When the team approves inference usage:
 
@@ -181,7 +203,7 @@ Do not change this during the token-constrained phase. When the team approves in
 
 Never replace the ARN list with `*`.
 
-## 7. Remove resources
+## 8. Remove resources
 
 Delete the application stack first. The evidence bucket must be empty before CloudFormation can
 delete it. Then empty the SAM artifact bucket and delete the bootstrap stack if CI/CD is no longer

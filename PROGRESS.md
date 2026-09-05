@@ -4,7 +4,7 @@ Last updated: 2026-09-05 (Asia/Singapore)
 
 ## Current status
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. Role 4's AWS platform branch now provisions the durable/security/observability path and passes the full local gate; actual AWS deployment remains pending account bootstrap and credentials. Live provider mode remains pending credentials, provider approvals, and an independent Bedrock-disable contract switch.
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The first AWS Lambda/DynamoDB/S3 stack and zero-token smoke path are deployed. The authenticated AWS v2 slice is being reconciled with the merged Cognito/ownership foundation. Live provider mode remains pending credentials, provider approvals, and an independent Bedrock-disable contract switch.
 
 ## Completed milestones
 
@@ -60,7 +60,7 @@ SAM CLI and Python 3.12 are not installed in this workspace, so those checks rem
 | Docker image build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
 | SAM validate/build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
 | AWS CloudFormation schemas | Passed locally | `cfn-lint` 1.56.0 on application and OIDC bootstrap templates |
-| AWS Lambda/DynamoDB deployment smoke | Blocked; fix prepared | OIDC and SAM transform succeed; workshop Lambda quota cannot support reserved concurrency while retaining ten unreserved executions |
+| AWS Lambda/DynamoDB deployment smoke | Passed | `adaptsg-demo` reached `CREATE_COMPLETE`; main commit `d38ae48` produced DynamoDB journey and private S3 evidence with zero Bedrock tokens |
 | Vercel platform build | Pending deployment | Vercel CLI/account unavailable locally |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
@@ -74,6 +74,7 @@ SAM CLI and Python 3.12 are not installed in this workspace, so those checks rem
 - [x] Added demo-fixed and API Gateway-claim principal adapter seams; spoofable principal headers are ignored.
 - [x] Added consent policy/readiness settings, action-intent API shape, and production authority-route disablement.
 - [x] Replaced the public AWS Function URL template with an authenticated HTTP API/Cognito/DynamoDB shape.
+- [x] Bound API Gateway-verified Cognito subjects to server-owned journeys.
 - [x] Added the single-caregiver ADR and point-in-time recovery runbook.
 - [ ] Complete transactional DynamoDB persistence for consent, intents and per-resource audit chains.
 - [ ] Add Cognito browser client, live allowlist verification and production telemetry/alarm coverage.
@@ -96,6 +97,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/kubernetes-dev-environment` | Role workflow, dev dependency and CI portability fix | PR #9 passing; merge blocked by review policy |
 | `feature/r3-redesigned-browser-client` | Rewrote `public/index.html` to the AdaptSG design-canvas redesign, frontend only | `scripts/check_web.mjs` and `tests/test_ui_browser_client.py`/`test_ui_demo_copy.py` pass; awaiting manual QA and merge |
 | `feature/r4-aws-platform` | DynamoDB/S3/IAM/observability stack and OIDC Lambda CI/CD | Full local gate passed; AWS deployment and review pending |
+| `feature/r4-authenticated-aws-demo` | Reconcile Cognito/API Gateway and owner-scoped v2 state with token-free AWS deployment | In progress; provider credentials intentionally absent |
 
 ## External setup still required
 
@@ -108,7 +110,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
 8. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
 9. Deploy the Vercel demo and inspect it in a connected browser at desktop and mobile widths.
-10. Merge the quota-compatible optional Lambda concurrency change, rerun the protected `aws-demo` deployment, and retain the first Lambda/DynamoDB smoke evidence.
+10. Deploy the authenticated AWS v2 stack, create one invite-only Cognito demo user, and retain the API Gateway authorization evidence.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
 

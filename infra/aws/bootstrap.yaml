@@ -149,7 +149,48 @@ Resources:
                   - dynamodb:UpdateContinuousBackups
                   - dynamodb:UpdateTable
                   - dynamodb:UpdateTimeToLive
-                Resource: !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-journeys"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-journeys"
+                  - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-state-v2"
+              - Sid: ManageCognitoAuthentication
+                Effect: Allow
+                Action:
+                  - cognito-idp:CreateResourceServer
+                  - cognito-idp:CreateUserPool
+                  - cognito-idp:CreateUserPoolClient
+                  - cognito-idp:CreateUserPoolDomain
+                  - cognito-idp:DeleteResourceServer
+                  - cognito-idp:DeleteUserPool
+                  - cognito-idp:DeleteUserPoolClient
+                  - cognito-idp:DeleteUserPoolDomain
+                  - cognito-idp:DescribeResourceServer
+                  - cognito-idp:DescribeUserPool
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:DescribeUserPoolDomain
+                  - cognito-idp:GetUserPoolMfaConfig
+                  - cognito-idp:ListResourceServers
+                  - cognito-idp:ListTagsForResource
+                  - cognito-idp:ListUserPoolClients
+                  - cognito-idp:SetUserPoolMfaConfig
+                  - cognito-idp:TagResource
+                  - cognito-idp:UntagResource
+                  - cognito-idp:UpdateResourceServer
+                  - cognito-idp:UpdateUserPool
+                  - cognito-idp:UpdateUserPoolClient
+                  - cognito-idp:UpdateUserPoolDomain
+                Resource: "*"
+              - Sid: ManageAuthenticatedHttpApi
+                Effect: Allow
+                Action:
+                  - apigateway:DELETE
+                  - apigateway:GET
+                  - apigateway:PATCH
+                  - apigateway:POST
+                  - apigateway:PUT
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis"
+                  - !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/*"
+                  - !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}::/tags/*"
               - Sid: ManageEvidenceBucket
                 Effect: Allow
                 Action:
