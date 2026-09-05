@@ -133,8 +133,8 @@ Resources:
           - Name: verified_email
             Priority: 1
       MfaConfiguration: OPTIONAL
-      SoftwareTokenMfaConfiguration:
-        Enabled: true
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
       Policies:
         PasswordPolicy:
           MinimumLength: 12

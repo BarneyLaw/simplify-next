@@ -96,6 +96,9 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert "Type: AWS::CloudWatch::Dashboard" in template
     assert "Type: AWS::Cognito::UserPool" in template
     assert "AllowAdminCreateUserOnly: true" in template
+    assert "EnabledMfas:" in template
+    assert "SOFTWARE_TOKEN_MFA" in template
+    assert "SoftwareTokenMfaConfiguration" not in template
     assert "GenerateSecret: false" in template
     assert "Type: AWS::Serverless::HttpApi" in template
     assert "DefaultAuthorizer: CognitoJwtAuthorizer" in template
