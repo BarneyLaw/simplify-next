@@ -102,10 +102,18 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert "SOFTWARE_TOKEN_MFA" in template
     assert "SoftwareTokenMfaConfiguration" not in template
     assert "GenerateSecret: false" in template
+    assert "CallbackURLs: [!Ref CognitoCallbackUrl]" in template
+    assert "LogoutURLs: [!Ref CognitoLogoutUrl]" in template
     assert "Type: AWS::Serverless::HttpApi" in template
     assert "DefaultAuthorizer: CognitoJwtAuthorizer" in template
     assert "IdentitySource: $request.header.Authorization" in template
     assert "AllowOrigins: [!Ref AllowedCorsOrigin]" in template
+    assert "AccessLogSettings:" in template
+    assert "DetailedMetricsEnabled: true" in template
+    assert "ThrottlingBurstLimit: !Ref ApiThrottleBurstLimit" in template
+    assert "ThrottlingRateLimit: !Ref ApiThrottleRateLimit" in template
+    access_log = template.split("AccessLogSettings:", 1)[1].split("DefaultRouteSettings:", 1)[0]
+    assert "prompt" not in access_log
     assert "production.invalid" not in template
     assert "SecretString:ONEMAP_API_TOKEN" in template
     assert "SecretString:LTA_ACCOUNT_KEY" in template
@@ -119,6 +127,8 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert '"BedrockModelArns=DISABLED"' in workflow
     assert '"LambdaReservedConcurrency=-1"' in workflow
     assert '"EnableDeletionProtection=false"' in workflow
+    assert '"CognitoCallbackUrl=${ADAPTSG_COGNITO_CALLBACK_URL}"' in workflow
+    assert '"CognitoLogoutUrl=${ADAPTSG_COGNITO_LOGOUT_URL}"' in workflow
     assert "Verify public health and protected user routes" in workflow
     assert '[[ "${protected_status}" == "401" ]]' in workflow
     assert "AWS_ACCESS_KEY_ID" not in workflow

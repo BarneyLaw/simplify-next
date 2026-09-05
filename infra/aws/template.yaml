@@ -17,6 +17,26 @@ Parameters:
     Default: http://localhost:8501
     AllowedPattern: ^https?://[^*]+$
     Description: Exact trusted browser origin; wildcards are rejected.
+  CognitoCallbackUrl:
+    Type: String
+    Default: http://localhost:8501
+    Description: Exact browser OAuth callback URL, including its callback path when used.
+    AllowedPattern: ^https?://[^*]+$
+  CognitoLogoutUrl:
+    Type: String
+    Default: http://localhost:8501
+    Description: Exact browser destination after Cognito logout.
+    AllowedPattern: ^https?://[^*]+$
+  ApiThrottleBurstLimit:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 1000
+  ApiThrottleRateLimit:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 1000
   ProviderSecretName:
     Type: String
     Default: ""
@@ -182,8 +202,8 @@ Resources:
         - adaptsg/consents.manage
         - adaptsg/audit.read
       SupportedIdentityProviders: [COGNITO]
-      CallbackURLs: [!Ref AllowedCorsOrigin]
-      LogoutURLs: [!Ref AllowedCorsOrigin]
+      CallbackURLs: [!Ref CognitoCallbackUrl]
+      LogoutURLs: [!Ref CognitoLogoutUrl]
 
   AdaptSgResourceServer:
     Type: AWS::Cognito::UserPoolResourceServer
@@ -305,10 +325,34 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  AdaptSgApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}-http-api"
+      RetentionInDays: 14
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
   AdaptSgHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: $default
+      FailOnWarnings: true
+      PropagateTags: true
+      Tags:
+        Application: AdaptSG
+        Environment: !Ref EnvironmentName
+      AccessLogSettings:
+        DestinationArn: !GetAtt AdaptSgApiAccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency"}
+      DefaultRouteSettings:
+        DetailedMetricsEnabled: true
+        ThrottlingBurstLimit: !Ref ApiThrottleBurstLimit
+        ThrottlingRateLimit: !Ref ApiThrottleRateLimit
       Auth:
         DefaultAuthorizer: CognitoJwtAuthorizer
         Authorizers:

@@ -85,6 +85,8 @@ Copy the bootstrap stack outputs into GitHub Actions environment variables:
 | `AWS_SAM_ARTIFACT_BUCKET` | `SamArtifactBucketName` |
 | `ADAPTSG_STACK_NAME` | `adaptsg-demo` |
 | `ADAPTSG_ALLOWED_CORS_ORIGIN` | exact trusted UI origin, never `*` |
+| `ADAPTSG_COGNITO_CALLBACK_URL` | exact OAuth callback URL; may include a callback path |
+| `ADAPTSG_COGNITO_LOGOUT_URL` | exact browser destination after logout |
 | `ADAPTSG_PROVIDER_SECRET_NAME` | leave empty until `adaptsg/demo/providers` exists |
 
 Read the outputs with:
@@ -150,6 +152,8 @@ sam deploy `
     EnvironmentName=demo `
     ApplicationMode=demo `
     AllowedCorsOrigin=https://your-ui.example `
+    CognitoCallbackUrl=https://your-ui.example/auth/callback `
+    CognitoLogoutUrl=https://your-ui.example/ `
     BedrockModelArns=DISABLED `
     EnablePointInTimeRecovery=false `
     EnableDeletionProtection=false `
