@@ -152,6 +152,7 @@ jobs:
             "AllowedCorsOrigin=${ADAPTSG_ALLOWED_CORS_ORIGIN}"
             "BedrockModelArns=DISABLED"
             "EnablePointInTimeRecovery=false"
+            "EnableDeletionProtection=false"
             "LambdaReservedConcurrency=-1"
           )
           if [[ -n "${ADAPTSG_PROVIDER_SECRET_NAME}" ]]; then

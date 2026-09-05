@@ -32,6 +32,11 @@ Parameters:
     Type: String
     Default: "true"
     AllowedValues: ["true", "false"]
+  EnableDeletionProtection:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Enable only after initial deployment and restore verification are complete.
   LambdaReservedConcurrency:
     Type: Number
     Default: 5
@@ -73,6 +78,7 @@ Conditions:
   BedrockInferenceEnabled: !Not
     - !Equals [!Join ["", !Ref BedrockModelArns], DISABLED]
   PointInTimeRecoveryEnabled: !Equals [!Ref EnablePointInTimeRecovery, "true"]
+  DeletionProtectionEnabled: !Equals [!Ref EnableDeletionProtection, "true"]
   HasLambdaReservedConcurrency: !Not [!Equals [!Ref LambdaReservedConcurrency, -1]]
 
 Globals:
@@ -225,7 +231,7 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: expires_at
         Enabled: true
-      DeletionProtectionEnabled: true
+      DeletionProtectionEnabled: !If [DeletionProtectionEnabled, true, false]
       Tags:
         - Key: adaptsg-schema-version
           Value: "1"

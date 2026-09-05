@@ -87,6 +87,8 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert 'TableName: !Sub "${AWS::StackName}-state-v2"' in template
     assert "BillingMode: PAY_PER_REQUEST" in template
     assert "AttributeName: expires_at" in template
+    assert "EnableDeletionProtection:" in template
+    assert "DeletionProtectionEnabled: !If" in template
     assert "Type: AWS::S3::Bucket" in template
     assert "BlockPublicPolicy: true" in template
     assert "LambdaReservedConcurrency:" in template
@@ -116,6 +118,7 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert "aws-actions/configure-aws-credentials@v6" in workflow
     assert '"BedrockModelArns=DISABLED"' in workflow
     assert '"LambdaReservedConcurrency=-1"' in workflow
+    assert '"EnableDeletionProtection=false"' in workflow
     assert "Verify public health and protected user routes" in workflow
     assert '[[ "${protected_status}" == "401" ]]' in workflow
     assert "AWS_ACCESS_KEY_ID" not in workflow
@@ -129,4 +132,6 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert "cloudformation:CreateChangeSet" in execution_role
     assert "aws:transform/Serverless-2016-10-31" in execution_role
     assert "cognito-idp:CreateUserPool" in execution_role
+    assert "apigateway:TagResource" in execution_role
+    assert "apigateway:UntagResource" in execution_role
     assert "apigateway:POST" in execution_role
