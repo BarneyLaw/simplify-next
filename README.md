@@ -137,28 +137,37 @@ The supplied AWS account guide specifies `us-east-1` for the hackathon. Confirm 
 
 ## AWS serverless deployment
 
-Requirements: AWS CLI v2, AWS SAM CLI and credentials permitted to create Lambda/IAM resources and invoke Bedrock.
+Requirements: AWS CLI v2, AWS SAM CLI, and an AWS SSO/profile or short-lived hackathon
+credentials. Bedrock access is not required for the default deployment.
 
 ```sh
 sam validate --lint --template-file infra/aws/template.yaml
 sam build --template-file infra/aws/template.yaml
-sam deploy --guided --region us-east-1 --capabilities CAPABILITY_IAM
+sam deploy --guided --region us-east-1 --capabilities CAPABILITY_NAMED_IAM
 ```
 
-The guided deployment asks for the Bedrock model and optional OneMap, LTA and data.gov.sg parameters. The custom SAM Makefile builds a lean API artifact without Streamlit, pandas or pyarrow.
+The custom SAM Makefile builds a lean API artifact without Streamlit, pandas or pyarrow. The
+complete one-time GitHub OIDC bootstrap, Secrets Manager setup, deployment variables, manual
+commands, verification, and teardown procedure is in [`infra/aws/README.md`](infra/aws/README.md).
 
 The stack contains:
 
 - Python 3.12 Lambda;
 - Mangum/FastAPI handler;
-- public Lambda Function URL for the time-boxed hackathon demo;
-- action-scoped `bedrock:InvokeModel` permission;
-- Lambda active tracing and CloudWatch logs.
+- IAM-authenticated Lambda Function URL with exact-origin CORS;
+- encrypted on-demand DynamoDB journey/idempotency storage with TTL;
+- private encrypted/versioned S3 catalog and evaluation-evidence storage;
+- reserved concurrency, X-Ray, retained logs, alarms, and an operations dashboard;
+- optional exact-resource Bedrock permission, disabled by default.
 
-The Function URL uses `AuthType: NONE` and wildcard CORS for demo convenience. Before production, add authentication, throttling, restricted origins and Secrets Manager/SSM. Delete the stack after the hackathon to stop resource use:
+`BedrockModelArns=DISABLED` is the safe default: no inference permission is attached and the
+GitHub pipeline asserts zero model tokens in its deterministic Lambda/DynamoDB smoke test. The
+main-branch deploy job uses GitHub OIDC rather than stored AWS access keys. Provider values are
+resolved from Secrets Manager when configured. Delete the application and bootstrap stacks after
+the hackathon to stop resource use:
 
 ```sh
-sam delete --stack-name adaptsg
+sam delete --stack-name adaptsg-demo
 ```
 
 ## Vercel deployment
@@ -307,8 +316,8 @@ Suggested slide flow: problem, caregiver evidence, solution, plan-act-adapt flow
 - BFA access must be requested from SLA; it is not a universally available endpoint.
 - Demo transport fares use a deterministic policy and are not live fare quotations.
 - OneMap BFA currently applies to walking routes; end-to-end accessible public transport requires deeper first/last-mile verification.
-- Journey state is in process/session memory. DynamoDB persistence is a documented next step.
-- The public Lambda Function URL is not production security.
+- Local/demo journey state is process memory; the AWS stack uses DynamoDB conditional writes and TTL.
+- The AWS Function URL requires IAM/SigV4; the public Vercel demo remains a separate demo-only path.
 - No booking, payment, international travel or medical interpretation is in scope.
 
 ## Git workflow

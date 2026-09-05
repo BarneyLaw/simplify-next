@@ -86,5 +86,175 @@ jobs:
       - uses: aws-actions/setup-sam@v2
       - name: Validate template
         run: sam validate --lint --template-file infra/aws/template.yaml
+      - name: Validate deployment bootstrap
+        run: sam validate --lint --template-file infra/aws/bootstrap.yaml
       - name: Build Lambda artifact
         run: sam build --template-file infra/aws/template.yaml
+
+  deploy-aws:
+    name: Deploy AWS demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [correctness, docker, sam]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+    environment: aws-demo
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      AWS_CLOUDFORMATION_ROLE_ARN: ${{ vars.AWS_CLOUDFORMATION_ROLE_ARN }}
+      AWS_SAM_ARTIFACT_BUCKET: ${{ vars.AWS_SAM_ARTIFACT_BUCKET }}
+      ADAPTSG_STACK_NAME: ${{ vars.ADAPTSG_STACK_NAME || 'adaptsg-demo' }}
+      ADAPTSG_ALLOWED_CORS_ORIGIN: ${{ vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8501' }}
+      ADAPTSG_PROVIDER_SECRET_NAME: ${{ vars.ADAPTSG_PROVIDER_SECRET_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download correctness evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: deployment-evidence
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: aws-actions/setup-sam@v2
+      - name: Verify required deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${AWS_ACCOUNT_ID:?Set the AWS_ACCOUNT_ID environment variable}"
+          : "${AWS_DEPLOY_ROLE_ARN:?Set AWS_DEPLOY_ROLE_ARN}"
+          : "${AWS_CLOUDFORMATION_ROLE_ARN:?Set AWS_CLOUDFORMATION_ROLE_ARN}"
+          : "${AWS_SAM_ARTIFACT_BUCKET:?Set AWS_SAM_ARTIFACT_BUCKET}"
+      - name: Assume short-lived AWS deployment role
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: AdaptSG-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+      - name: Verify assumed AWS identity
+        run: |
+          aws sts get-caller-identity
+      - name: Build and deploy the token-free demo stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          sam build --template-file infra/aws/template.yaml
+          parameters=(
+            "EnvironmentName=demo"
+            "ApplicationMode=demo"
+            "AllowedCorsOrigin=${ADAPTSG_ALLOWED_CORS_ORIGIN}"
+            "BedrockModelArns=DISABLED"
+            "EnablePointInTimeRecovery=false"
+          )
+          if [[ -n "${ADAPTSG_PROVIDER_SECRET_NAME}" ]]; then
+            parameters+=("ProviderSecretName=${ADAPTSG_PROVIDER_SECRET_NAME}")
+          fi
+          sam deploy \
+            --template-file .aws-sam/build/template.yaml \
+            --stack-name "${ADAPTSG_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --s3-bucket "${AWS_SAM_ARTIFACT_BUCKET}" \
+            --s3-prefix "deployments/${GITHUB_SHA}" \
+            --role-arn "${AWS_CLOUDFORMATION_ROLE_ARN}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides "${parameters[@]}" \
+            --tags Application=AdaptSG Environment=demo
+      - name: Smoke-test Lambda and DynamoDB without Bedrock
+        shell: bash
+        env:
+          IDEMPOTENCY_KEY: github-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          function_name=$(aws cloudformation describe-stacks \
+            --stack-name "${ADAPTSG_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='AdaptSgFunctionName'].OutputValue" \
+            --output text)
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          body = {
+              "prompt": (
+                  "Plan 10 am-5 pm from Toa Payoh for a wheelchair user, "
+                  "400 m maximum walking, lunch by 1 pm, budget $70."
+              ),
+              "journey_date": "2026-09-01",
+          }
+          event = {
+              "version": "2.0",
+              "routeKey": "$default",
+              "rawPath": "/api/journeys",
+              "rawQueryString": "",
+              "headers": {
+                  "content-type": "application/json",
+                  "idempotency-key": os.environ["IDEMPOTENCY_KEY"],
+              },
+              "requestContext": {
+                  "domainName": "lambda",
+                  "http": {
+                      "method": "POST",
+                      "path": "/api/journeys",
+                      "protocol": "HTTP/1.1",
+                      "sourceIp": "127.0.0.1",
+                      "userAgent": "github-actions",
+                  },
+                  "requestId": "github-actions",
+                  "stage": "$default",
+                  "time": "01/Jan/2026:00:00:00 +0000",
+                  "timeEpoch": 0,
+              },
+              "body": json.dumps(body),
+              "isBase64Encoded": False,
+          }
+          Path("smoke-event.json").write_text(json.dumps(event), encoding="utf-8")
+          PY
+          aws lambda invoke \
+            --function-name "${function_name}" \
+            --cli-binary-format raw-in-base64-out \
+            --payload file://smoke-event.json \
+            smoke-response.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          response = json.loads(Path("smoke-response.json").read_text(encoding="utf-8"))
+          assert response["statusCode"] == 200, response
+          journey = json.loads(response["body"])
+          assert journey["status"] == "draft", journey
+          assert journey["token_usage"] == {"input_tokens": 0, "output_tokens": 0}, journey
+          print("Lambda/DynamoDB smoke test passed; Bedrock token usage is zero.")
+          PY
+      - name: Publish versioned catalog and evaluation evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_bucket=$(aws cloudformation describe-stacks \
+            --stack-name "${ADAPTSG_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='EvidenceBucketName'].OutputValue" \
+            --output text)
+          aws s3 cp src/adaptsg/data/venues.json \
+            "s3://${evidence_bucket}/catalog/venues.json" \
+            --sse AES256
+          aws s3 cp deployment-evidence/coverage.xml \
+            "s3://${evidence_bucket}/evals/${GITHUB_SHA}/coverage.xml" \
+            --sse AES256
+          aws s3api head-object \
+            --bucket "${evidence_bucket}" \
+            --key "evals/${GITHUB_SHA}/coverage.xml"
+      - name: Record deployed resources
+        shell: bash
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${ADAPTSG_STACK_NAME}" \
+            --query 'Stacks[0].Outputs[*].[OutputKey,OutputValue]' \
+            --output table >> "${GITHUB_STEP_SUMMARY}"

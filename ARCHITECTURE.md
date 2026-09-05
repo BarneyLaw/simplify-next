@@ -113,37 +113,50 @@ flowchart TB
       VF --> CORE2[Python core]
     end
     subgraph AWS[AWS serverless mode]
-      URL[Lambda Function URL] --> LF[Lambda + Mangum/FastAPI]
-      LF --> BR[Amazon Bedrock]
+      CI[GitHub OIDC CI/CD] --> S3[Private S3 evidence bucket]
+      CI --> LF
+      IAM[IAM / SigV4 caller] --> URL[Lambda Function URL]
+      URL --> LF[Lambda + Mangum/FastAPI]
+      LF --> DB[DynamoDB journey state + TTL]
+      LF -. disabled by default .-> BR[Amazon Bedrock]
       LF --> EXT[Singapore public APIs]
-      LF --> CW[CloudWatch logs and traces]
+      LF --> CW[CloudWatch EMF, logs, alarms + X-Ray]
     end
 ```
 
 Streamlit is not deployed directly to Vercel because it expects a persistent Python process and WebSocket session. Vercel instead hosts a small static client and a Python FastAPI function backed by the same service. Docker remains the full Streamlit path.
 
-The AWS SAM template uses Lambda, a Function URL and action-scoped Bedrock permission. The public `NONE` Function URL authorization is acceptable only for a time-boxed hackathon demo. Add IAM/Cognito, throttling and restricted CORS before any production launch.
+The AWS SAM template uses an `AWS_IAM` Function URL, exact-origin CORS, reserved concurrency,
+an on-demand DynamoDB table and private S3. GitHub Actions assumes a repository-scoped OIDC role
+and delegates provisioning to a dedicated CloudFormation execution role. Browser clients must use
+a trusted SigV4-capable identity layer; AWS does not expose an unauthenticated production URL.
 
 ## Current versus planned AWS services
 
 Implemented:
 
-- Amazon Bedrock on-demand inference;
-- Lambda Function URL deployment;
-- CloudWatch/X-Ray integration supplied by Lambda active tracing;
+- optional Amazon Bedrock on-demand inference with exact model resources and a disabled default;
+- IAM-authenticated Lambda Function URL deployment with restricted CORS;
+- DynamoDB on-demand storage for versioned journey state and idempotency, with TTL;
+- private encrypted/versioned S3 storage for catalog and evaluation artifacts;
+- Secrets Manager dynamic references for optional provider values;
+- CloudWatch EMF safety/latency metrics, alarms and dashboard plus X-Ray tracing;
+- GitHub OIDC CI/CD with deterministic post-deployment Lambda/DynamoDB smoke coverage;
 - no VPC, NAT Gateway, load balancer, EC2, RDS or provisioned throughput.
 
-Planned after the proof of concept:
+Remaining production hardening:
 
-- DynamoDB on-demand for approved journey state and idempotency;
-- S3 for versioned venue data and evaluation artifacts;
-- structured CloudWatch metrics for tool success, latency, retained segments and loop-cap hits;
-- Secrets Manager or SSM Parameter Store instead of template parameters;
-- authenticated API access and per-user data retention rules.
+- add a user-facing identity broker before connecting a browser directly to the IAM URL;
+- define per-user authorization and deletion/retention policy beyond the current TTL;
+- add an independent runtime switch for live Singapore providers without attempting Bedrock;
+- wire alarm actions to an approved notification target.
 
 ## Observability and evaluation
 
-The test suite enforces 20 named scenarios and records branch coverage. Production telemetry should add:
+The test suite enforces 20 named scenarios and records branch coverage. The Lambda boundary emits
+low-cardinality metrics for request latency/errors, validated itineraries, retained segments, tool
+verification success, replan count, loop-cap hits, and Bedrock input/output tokens. It deliberately
+omits prompts, journey IDs, and response bodies. Further product evidence should measure:
 
 - hard-constraint violation rate (target 0%);
 - feasible itinerary rate by scenario;
