@@ -107,6 +107,11 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert "Type: AWS::Serverless::HttpApi" in template
     assert "DefaultAuthorizer: CognitoJwtAuthorizer" in template
     assert "IdentitySource: $request.header.Authorization" in template
+    assert "Path: /{proxy+}" not in template
+    assert "AuthorizationScopes: [adaptsg/journeys.read]" in template
+    assert "AuthorizationScopes: [adaptsg/journeys.write]" in template
+    assert "AuthorizationScopes: [adaptsg/consents.manage]" in template
+    assert "AuthorizationScopes: [adaptsg/audit.read]" in template
     assert "AllowOrigins: [!Ref AllowedCorsOrigin]" in template
     assert "AccessLogSettings:" in template
     assert "DetailedMetricsEnabled: true" in template

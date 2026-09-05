@@ -175,8 +175,9 @@ Create user**. Use a real team email, mark it verified only after confirming own
 temporary password. Do not put a password in Git, GitHub variables, CloudFormation parameters, or
 shell history.
 
-The browser login must use Cognito authorization code flow with PKCE. API Gateway validates the
-JWT before Lambda runs; application code then binds the verified `sub` claim to the journey owner.
+The browser login must use Cognito authorization code flow with PKCE and send the access token,
+not the ID token, as a bearer token. API Gateway validates the JWT and the route-specific OAuth
+scope before Lambda runs; application code then binds the verified `sub` claim to the journey owner.
 The current browser client does not yet perform this OAuth exchange, so that integration remains
 a Role 3 handoff rather than an AWS credential workaround.
 
