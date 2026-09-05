@@ -21,7 +21,7 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 - [x] Added server-owned journey lifecycle routes with draft approval, monitoring, replanning and version conflicts.
 - [x] Added deterministic in-memory demo storage and a DynamoDB JSON/TTL storage adapter.
 - [x] Added idempotency-key replay for journey creation, decisions and replans.
-- [x] Added the full Streamlit demo and lightweight Vercel web mode.
+- [x] Added the full Streamlit demo and a lightweight Vercel API mode.
 - [x] Added Docker, Vercel and AWS SAM deployment files.
 - [x] Added 71 tests, including 20 named evaluation scenarios.
 - [x] Added Ruff, strict mypy, Bandit, dependency audit and 90% coverage gates.
@@ -94,7 +94,8 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/ci-tests` | 71 tests, 20 scenarios and CI/security gates | Merged |
 | `feature/project-documentation` | Governance, architecture, README and tracker | Merged |
 | `feature/kubernetes-dev-environment` | Role workflow, dev dependency and CI portability fix | PR #9 passing; merge blocked by review policy |
-| `feature/r3-redesigned-browser-client` | Rewrote `public/index.html` to the AdaptSG design-canvas redesign, frontend only | `scripts/check_web.mjs` and `tests/test_ui_browser_client.py`/`test_ui_demo_copy.py` pass; awaiting manual QA and merge |
+| `feature/r3-redesigned-browser-client` | Rewrote `public/index.html` to the AdaptSG design-canvas redesign, frontend only | Superseded by `feature/r3-streamlit-redesign`; not merged |
+| `feature/r3-streamlit-redesign` | Ported the design-canvas redesign into Streamlit (`src/adaptsg/ui.py`, `ui.css`) and retired the browser client — `public/index.html`, `scripts/check_web.mjs`, `tests/test_ui_browser_client.py` are deleted | Full local gate passed; awaiting manual QA and merge |
 | `feature/r4-aws-platform` | DynamoDB/S3/IAM/observability stack and OIDC Lambda CI/CD | Full local gate passed; AWS deployment and review pending |
 
 ## External setup still required

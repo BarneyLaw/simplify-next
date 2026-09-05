@@ -10,7 +10,7 @@ The implementation uses one bounded orchestrator, not a swarm. Bedrock interpret
 
 ```mermaid
 flowchart LR
-    U[Caregiver] --> UI[Streamlit or Vercel web UI]
+    U[Caregiver] --> UI[Streamlit UI]
     UI --> API[AdaptSG service / FastAPI]
     API --> G[Bounded LangGraph]
     G --> P[Preference parser]
@@ -109,8 +109,7 @@ flowchart TB
       ST[Streamlit :8501] --> CORE[Python core]
     end
     subgraph Vercel[Vercel mode]
-      WEB[Static accessible web UI] --> VF[Python FastAPI Function]
-      VF --> CORE2[Python core]
+      VF[Python FastAPI Function, JSON API only] --> CORE2[Python core]
     end
     subgraph AWS[AWS serverless mode]
       CI[GitHub OIDC CI/CD] --> S3[Private S3 evidence bucket]
@@ -124,7 +123,7 @@ flowchart TB
     end
 ```
 
-Streamlit is not deployed directly to Vercel because it expects a persistent Python process and WebSocket session. Vercel instead hosts a small static client and a Python FastAPI function backed by the same service. Docker remains the full Streamlit path.
+Streamlit is not deployed directly to Vercel because it expects a persistent Python process and WebSocket session. Vercel instead hosts a Python FastAPI function — a JSON API only, with no bundled browser page — backed by the same service. Docker remains the full caregiver-facing Streamlit path.
 
 The AWS SAM template uses an `AWS_IAM` Function URL, exact-origin CORS, reserved concurrency,
 an on-demand DynamoDB table and private S3. GitHub Actions assumes a repository-scoped OIDC role

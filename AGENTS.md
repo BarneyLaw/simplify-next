@@ -30,7 +30,7 @@ An agent must never let model output directly become an accepted itinerary. Ever
 - `planning.py`: deterministic candidate selection, scheduling, minimal-change scoring and replanning.
 - `validation.py`: final authority for hard-constraint compliance.
 - `agent.py`: bounded orchestration and approval boundary.
-- `streamlit_app.py`, `web_api.py`, `public/`: presentation and transport boundaries; no safety logic.
+- `streamlit_app.py`, `src/adaptsg/ui.py`, `web_api.py`: presentation and transport boundaries; no safety logic.
 
 Do not duplicate a core rule in a UI or prompt. Put it in the domain or validator and test it.
 
