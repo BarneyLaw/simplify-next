@@ -56,7 +56,7 @@ def test_a_plan_in_one_session_is_invisible_to_another_session() -> None:
 
 
 def test_a_replan_proposal_does_not_leak_between_sessions() -> None:
-    first = click(create_plan(session()), "Simulate heavy rain + flood")
+    first = click(create_plan(session()), "Heavy rain and flooding")
     second = create_plan(session())
 
     assert first.session_state["proposal"] is not None
