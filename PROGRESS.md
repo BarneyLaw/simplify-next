@@ -4,7 +4,7 @@ Last updated: 2026-09-05 (Asia/Singapore)
 
 ## Current status
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. Main CI independently passed the token-free Lambda/DynamoDB smoke and verified that health is public while journey data remains protected. Bedrock is disabled in both the stack output and Lambda environment. Live provider mode remains pending credentials, provider approvals, and an independent Bedrock-disable contract switch.
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static-web foundation (private S3, CloudFront, same-origin API, runtime auth configuration, and configurable Cognito self-signup) is implemented on `feature/r4-aws-web-hosting` and awaits bootstrap/application deployment. Bedrock remains disabled. The static product UI and browser PKCE controls are a Role 3 handoff.
 
 ## Completed milestones
 
@@ -21,8 +21,8 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 - [x] Added server-owned journey lifecycle routes with draft approval, monitoring, replanning and version conflicts.
 - [x] Added deterministic in-memory demo storage and a DynamoDB JSON/TTL storage adapter.
 - [x] Added idempotency-key replay for journey creation, decisions and replans.
-- [x] Added the full Streamlit demo and a lightweight Vercel API mode.
-- [x] Added Docker, Vercel and AWS SAM deployment files.
+- [x] Added the full Streamlit demo and a lightweight legacy serverless API mode.
+- [x] Added Docker and AWS SAM deployment files; AWS is the sole public deployment target.
 - [x] Added 71 tests, including 20 named evaluation scenarios.
 - [x] Added Ruff, strict mypy, Bandit, dependency audit and 90% coverage gates.
 - [x] Added Docker build and SAM validate/build jobs to GitHub Actions.
@@ -57,7 +57,7 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | Dependency audit | Passed | No known vulnerabilities after minimum-version update |
 | Streamlit headless flow | Passed | Initial plan, rain proposal, apply and fatigue approval |
 | FastAPI plan/replan | Passed | Local `TestClient` integration |
-| Vercel browser JS syntax | Passed | `scripts/check_web.mjs`; lifecycle client uses server-owned journey routes |
+| Legacy serverless config syntax | Passed | Compatibility file retained but not deployed |
 | Live provider parsers | Passed with mocks | Bedrock, OneMap, data.gov.sg, LTA/PUB |
 | Docker image build | Passed in CI | Main run `33972607910` at commit `4dbac581` |
 | SAM validate/build | Passed in CI | Main run `33972607910` at commit `4dbac581` |
@@ -66,7 +66,6 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | AWS HTTP API log-delivery bootstrap | Passed | `adaptsg-cicd-bootstrap` reached `UPDATE_COMPLETE`; effective execution-role actions verified with IAM |
 | AWS Lambda/DynamoDB deployment smoke | Passed | `adaptsg-demo` reached `CREATE_COMPLETE`; main commit `d38ae48` produced DynamoDB journey and private S3 evidence with zero Bedrock tokens |
 | AWS authenticated v2 deployment | Passed | `adaptsg-demo` reached `UPDATE_COMPLETE`; main run `33972607910` passed token-free smoke and public/protected route checks |
-| Vercel platform build | Pending deployment | Vercel CLI/account unavailable locally |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
 | LAN DNS/TLS/health | Passed | `sim-next.lab.packetcraft.dev` -> `192.168.1.250`; trusted HTTPS 200 |
@@ -82,7 +81,7 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 - [x] Bound API Gateway-verified Cognito subjects to server-owned journeys.
 - [x] Added the single-caregiver ADR and point-in-time recovery runbook.
 - [ ] Complete transactional DynamoDB persistence for consent, intents and per-resource audit chains.
-- [ ] Add Cognito browser client, live allowlist verification and production telemetry/alarm coverage.
+- [ ] Complete the Role 3 static Cognito/PKCE browser client and live allowlist verification.
 - [ ] Run Python 3.12 full gate, SAM validate/build, staging AWS integration and restore drill.
 - [x] Add local CloudFormation schema lint plus rollback-safe table protection controls.
 - [x] Add explicit OAuth-scoped API routes, privacy-safe API access logs and edge throttling on the Role 4 recovery branch.
@@ -109,6 +108,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-authenticated-aws-demo` | Reconcile Cognito/API Gateway and owner-scoped v2 state with token-free AWS deployment | Merged; provider credentials intentionally absent |
 | `feature/r4-aws-recovery-hardening` | API Gateway deployment permission, rollback-safe DynamoDB protection and local CloudFormation lint | Merged; second deployment rolled back at access-log activation |
 | `feature/r4-api-log-delivery-permissions` | CloudWatch Logs delivery permissions required by authenticated HTTP API access logging | Locally verified; bootstrap and application deployment passed; merge pending |
+| `feature/r4-aws-web-hosting` | CloudFront/private-S3 static hosting, same-origin API, Cognito self-signup, PKCE runtime contract and CI publishing | Role 4 tests/Ruff/SAM lint pass; full gate reaches 174 passed and 90.46% coverage but one pre-existing Role 3 Streamlit assertion fails; AWS deployment pending |
 
 ## External setup still required
 
@@ -120,8 +120,8 @@ The repository keeps each feature boundary visible and uses incremental commits.
 6. Obtain the required review for AdaptSG PR #9; all CI checks are passing.
 7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
 8. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
-9. Deploy the Vercel demo and inspect it in a connected browser at desktop and mobile widths.
-10. Create one invite-only Cognito demo user and retain the API Gateway authorization evidence.
+9. Have Role 3 add the static UI and OAuth/PKCE controls under `public/`, consuming `/runtime-config.json`.
+10. Exercise Cognito signup, email verification, login, protected API access, and logout in two browsers.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
 
@@ -169,7 +169,7 @@ Out of MVP scope:
 - **One orchestrator:** the problem needs bounded coordination, not a swarm.
 - **Curated venues:** reliability and unsupported-claim prevention outweigh catalog breadth in the MVP.
 - **Smallest change:** candidate scoring heavily penalizes changed segments before cost/walking tie-breakers.
-- **Dual web mode:** Streamlit remains the full UI; Vercel uses static HTML plus FastAPI because Streamlit is not a native serverless/WebSocket fit.
+- **AWS-only web delivery:** Streamlit remains a local/container interface; CloudFront serves the separate static browser client from private S3 and proxies `/api/*` to API Gateway.
 - **Serverless AWS:** Lambda, DynamoDB on demand and optional Bedrock avoid always-on compute; Bedrock permission is disabled during the token-constrained phase.
 - **Demo/live separation:** deterministic adapters keep CI and the recorded story reproducible while live adapters remain independently testable.
 

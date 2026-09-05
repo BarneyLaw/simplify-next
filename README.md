@@ -134,7 +134,8 @@ In live mode `BedrockPreferenceParser` calls the Bedrock Converse API at tempera
 
 If Bedrock extraction fails, the local app uses a conservative fallback and displays a warning. Routing or environment failures do not become live claims: the current plan is retained and live verification is reported as failed.
 
-The supplied AWS account guide specifies `us-east-1` for the hackathon. Confirm that the configured model is enabled in that region before the demo.
+The deployed workshop stack uses `ap-southeast-1`. Keep all regional resources and GitHub variables
+on that region; Bedrock stays disabled for this demo phase.
 
 ## AWS serverless deployment
 
@@ -144,7 +145,7 @@ credentials. Bedrock access is not required for the default deployment.
 ```sh
 sam validate --lint --template-file infra/aws/template.yaml
 sam build --template-file infra/aws/template.yaml
-sam deploy --guided --region us-east-1 --capabilities CAPABILITY_NAMED_IAM
+sam deploy --guided --region ap-southeast-1 --capabilities CAPABILITY_NAMED_IAM
 ```
 
 The custom SAM Makefile builds a lean API artifact without Streamlit, pandas or pyarrow. The
@@ -155,7 +156,10 @@ The stack contains:
 
 - Python 3.12 Lambda;
 - Mangum/FastAPI handler;
-- IAM-authenticated Lambda Function URL with exact-origin CORS;
+- CloudFront HTTPS delivery from a private static-web S3 bucket;
+- same-origin `/api/*` proxy to the Cognito-scoped API Gateway HTTP API;
+- Cognito Managed Login with email signup and authorization-code/PKCE support;
+- IAM-authenticated operations Function URL;
 - encrypted on-demand DynamoDB journey/idempotency storage with TTL;
 - private encrypted/versioned S3 catalog and evaluation-evidence storage;
 - reserved concurrency, X-Ray, retained logs, alarms, and an operations dashboard;
@@ -171,25 +175,23 @@ the hackathon to stop resource use:
 sam delete --stack-name adaptsg-demo
 ```
 
-## Vercel deployment
+## AWS static browser deployment
 
-Vercel cannot reliably host Streamlit's long-running WebSocket process. This repository therefore uses:
+Streamlit cannot be converted into static HTML because it needs a Python server and WebSocket
+session. The AWS production path therefore uses:
 
-- Streamlit for the full caregiver experience, run locally or in Docker;
-- `api/index.py` as the Vercel FastAPI function, serving the same JSON API AWS Lambda uses;
-- the same Python service, validator and tests in every mode.
+- Streamlit for local/container development;
+- a separate static browser client in `public/`;
+- private S3 plus CloudFront for the browser client;
+- Cognito Managed Login and API Gateway/Lambda for authenticated application calls.
 
-Install and deploy:
+On every main-branch deployment, CI uploads `public/` when it contains `index.html`; until the UI
+handoff lands, it uploads a small infrastructure status page. CI also generates
+`/runtime-config.json` with the public Cognito client/domain, PKCE endpoints, callback URL, scopes,
+and same-origin API base. No password, token, provider key, or client secret belongs in static files.
 
-```sh
-npm install --global vercel
-vercel
-vercel --prod
-```
-
-Set `ADAPTSG_MODE=demo` for a credential-free public demonstration. For live Bedrock calls from the Vercel Python function, configure all required AWS and Singapore API environment variables in the Vercel project. Hackathon AWS session credentials expire, so refresh them before the judging window. Use a narrowly scoped deploy identity for any longer-lived environment.
-
-The Python runtime entry point and routing follow [Vercel's FastAPI convention](https://vercel.com/docs/functions/runtimes/python). `vercel.json` excludes tests, infrastructure and the Streamlit UI file from the function bundle; Vercel serves the JSON API only, with no browser page.
+The final `WebAppUrl` CloudFormation output is the public AWS URL. Bedrock is connected only through
+an explicitly disabled permission condition and is not called by the deterministic demo.
 
 ## API
 
@@ -228,7 +230,7 @@ No booking, payment or medical endpoint exists.
 ```text
 .
 |-- streamlit_app.py              Full caregiver demo UI
-|-- api/index.py                  Vercel Python/FastAPI entry point
+|-- api/index.py                  Dormant legacy serverless compatibility entry point
 |-- src/adaptsg/
 |   |-- agent.py                  Bounded LangGraph and service facade
 |   |-- domain.py                 Strict immutable journey state
@@ -247,8 +249,9 @@ No booking, payment or medical endpoint exists.
 |-- tests/                         Unit, contract and 20 scenario tests
 |-- scripts/check.*               Local equivalents of CI gates
 |-- Dockerfile                    Non-root Streamlit image
-|-- vercel.json                   Lean Vercel function config
-|-- infra/aws/template.yaml       Lambda/Bedrock SAM stack
+|-- vercel.json                   Dormant compatibility config; not deployed
+|-- infra/aws/template.yaml       CloudFront/S3/Cognito/API/Lambda SAM stack
+|-- infra/aws/web/index.html      Placeholder until Role 3 supplies public/index.html
 |-- Makefile                      Lean SAM artifact builder
 |-- ARCHITECTURE.md               Flows, trust boundaries and deployment
 |-- AGENTS.md                     Safety, coding and Git rules for agents
@@ -318,7 +321,7 @@ Suggested slide flow: problem, caregiver evidence, solution, plan-act-adapt flow
 - Demo transport fares use a deterministic policy and are not live fare quotations.
 - OneMap BFA currently applies to walking routes; end-to-end accessible public transport requires deeper first/last-mile verification.
 - Local/demo journey state is process memory; the AWS stack uses DynamoDB conditional writes and TTL.
-- The AWS Function URL requires IAM/SigV4; the public Vercel demo remains a separate demo-only path.
+- The AWS operations Function URL requires IAM/SigV4; browsers use CloudFront, Cognito, and API Gateway.
 - No booking, payment, international travel or medical interpretation is in scope.
 
 ## Git workflow
