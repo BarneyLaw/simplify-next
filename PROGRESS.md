@@ -1,6 +1,6 @@
 # AdaptSG Progress
 
-Last updated: 2026-09-01 (Asia/Singapore)
+Last updated: 2026-09-05 (Asia/Singapore)
 
 ## Current status
 
@@ -30,9 +30,14 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 
 ## Verified baseline
 
+The current Role 1 trust scaffold was observed on `feature/r1-production-trust-foundations`
+before the production-hardening changes: 163 tests passed with 90.50% branch coverage under
+the local Python 3.13.7 virtual environment. This is not a completed Python 3.12 full-gate
+result.
+
 | Check | Result | Evidence |
 |---|---:|---|
-| Tests | 71 passed | `python -m pytest` |
+| Tests | 163 passed | `.venv/bin/python -m pytest -q` under Python 3.13.7 |
 | Named scenarios | 20 passed | `tests/test_evaluation_scenarios.py` |
 | Branch coverage | 98.1% | CI threshold is 90% |
 | Ruff format/lint | Passed | `scripts/check.ps1` |
@@ -50,6 +55,18 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
 | LAN DNS/TLS/health | Passed | `sim-next.lab.packetcraft.dev` -> `192.168.1.250`; trusted HTTPS 200 |
 | Browser visual/session QA | Blocked | No in-app or extension browser connected in this session |
+
+## Production trust foundations in progress
+
+- [x] Created `feature/r1-production-trust-foundations` while preserving the six existing Role 1 files.
+- [x] Added server-owned journey owner and processing-consent references.
+- [x] Added demo-fixed and API Gateway-claim principal adapter seams; spoofable principal headers are ignored.
+- [x] Added consent policy/readiness settings, action-intent API shape, and production authority-route disablement.
+- [x] Replaced the public AWS Function URL template with an authenticated HTTP API/Cognito/DynamoDB shape.
+- [x] Added the single-caregiver ADR and point-in-time recovery runbook.
+- [ ] Complete transactional DynamoDB persistence for consent, intents and per-resource audit chains.
+- [ ] Add Cognito browser client, live allowlist verification and production telemetry/alarm coverage.
+- [ ] Run Python 3.12 full gate, SAM validate/build, staging AWS integration and restore drill.
 
 ## Current feature branches and merges
 
@@ -133,4 +150,3 @@ Out of MVP scope:
 ## How to update this file
 
 Update the date and relevant section whenever a feature is merged, a gate changes, a provider is verified, a deployment is created/deleted or a blocker is discovered. Never turn a pending external check into “passed” based only on local mocks.
-
