@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
@@ -23,6 +24,8 @@ from adaptsg.tools.freshness import (
     successful_result,
 )
 from adaptsg.tools.routing import distance_metres
+
+LOGGER = logging.getLogger(__name__)
 
 
 class EnvironmentClient(Protocol):
@@ -97,6 +100,7 @@ class LiveEnvironmentClient:
             psi = self._get(self.psi_url, self._data_headers())
             floods = self._get(self.flood_url, self._lta_headers())
             train = self._get(self.train_url, self._lta_headers())
+            LOGGER.info("LTA train-alert response: %s", train)
             weather_record = cast(dict[str, Any], weather["data"]["records"][0])
             psi_item = cast(dict[str, Any], psi["data"]["items"][0])
             weather_summary = str(weather_record["general"]["forecast"]["text"])
@@ -188,12 +192,38 @@ class LiveEnvironmentClient:
 
     @staticmethod
     def _train_disruptions(payload: dict[str, Any]) -> frozenset[str]:
-        records = cast(list[dict[str, Any]], payload.get("value", []))
-        return frozenset(
-            str(record.get("Line", "unknown"))
-            for record in records
-            if int(record.get("Status", 1)) == 2
-        )
+        raw_records = payload.get("value", [])
+        if isinstance(raw_records, dict):
+            try:
+                status = int(raw_records.get("Status", 1))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("LTA train-alert response contained an invalid status") from exc
+            if status != 2:
+                return frozenset()
+            affected_segments = raw_records.get("AffectedSegments", [])
+            if not isinstance(affected_segments, list):
+                raise ValueError("LTA train-alert response contained invalid affected segments")
+            labels = {
+                str(segment.get("Line") or segment.get("Route") or "unknown")
+                if isinstance(segment, dict)
+                else str(segment)
+                for segment in affected_segments
+            }
+            return frozenset(labels or {"unknown"})
+        if not isinstance(raw_records, list):
+            raise ValueError("LTA train-alert response contained an invalid value list")
+
+        disruptions: set[str] = set()
+        for record in raw_records:
+            if not isinstance(record, dict):
+                raise ValueError("LTA train-alert response contained an invalid record")
+            try:
+                status = int(record.get("Status", 1))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("LTA train-alert response contained an invalid status") from exc
+            if status == 2:
+                disruptions.add(str(record.get("Line", "unknown")))
+        return frozenset(disruptions)
 
     @staticmethod
     def _point(lat_text: str, lng_text: str) -> Location:

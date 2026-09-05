@@ -219,7 +219,17 @@ def test_onemap_public_transport_parses_walking_legs() -> None:
         }
     }
     client = httpx.Client(
-        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=payload))
+        transport=httpx.MockTransport(
+            lambda request: (
+                httpx.Response(200, json=payload)
+                if request.url.params["date"] == "09-01-2026"
+                and request.url.params["time"] == "10:00:00"
+                and request.url.params["mode"] == "TRANSIT"
+                and request.url.params["maxWalkDistance"] == "400"
+                and request.url.params["numItineraries"] == "1"
+                else httpx.Response(400)
+            )
+        )
     )
     route = OneMapRoutingClient(token="test", client=client).route(
         origin_label="A",
@@ -370,6 +380,30 @@ def test_live_environment_combines_official_feeds(catalog: VenueCatalog) -> None
     assert snapshot.freshness is FreshnessStatus.STALE
 
 
+def test_live_environment_accepts_current_train_alert_shape(catalog: VenueCatalog) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("TrainServiceAlerts"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "Status": 1,
+                        "AffectedSegments": [],
+                        "Message": [{"Content": "Planned service adjustment"}],
+                    }
+                },
+            )
+        return live_handler(request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    snapshot = LiveEnvironmentClient(
+        catalog=catalog,
+        lta_account_key="lta-key",
+        client=client,
+    ).current()
+    assert snapshot.disrupted_route_labels == frozenset()
+
+
 def test_live_environment_requires_lta_key(catalog: VenueCatalog) -> None:
     with pytest.raises(ToolUnavailable, match="LTA_ACCOUNT_KEY"):
         LiveEnvironmentClient(catalog=catalog, lta_account_key="").current()
@@ -381,5 +415,20 @@ def test_live_environment_translates_provider_errors(catalog: VenueCatalog) -> N
         LiveEnvironmentClient(
             catalog=catalog,
             lta_account_key="test",
+            client=client,
+        ).current()
+
+
+def test_live_environment_translates_malformed_train_alerts(catalog: VenueCatalog) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("TrainServiceAlerts"):
+            return httpx.Response(200, json={"value": [{"Status": {"unexpected": True}}]})
+        return live_handler(request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ToolUnavailable, match="verification failed"):
+        LiveEnvironmentClient(
+            catalog=catalog,
+            lta_account_key="lta-key",
             client=client,
         ).current()

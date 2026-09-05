@@ -105,7 +105,7 @@ def test_bedrock_parser_accepts_fenced_json_and_usage() -> None:
         }
     )
     parser = BedrockPreferenceParser(
-        settings=Settings(adaptsg_mode="live"),
+        settings=Settings(adaptsg_mode="live", adaptsg_use_bedrock=True),
         catalog=VenueCatalog(),
         client=client,
     )
@@ -122,7 +122,7 @@ def test_bedrock_parser_accepts_fenced_json_and_usage() -> None:
 
 def test_bedrock_failure_falls_back_safely() -> None:
     parser = BedrockPreferenceParser(
-        settings=Settings(adaptsg_mode="live"),
+        settings=Settings(adaptsg_mode="live", adaptsg_use_bedrock=True),
         catalog=VenueCatalog(),
         client=FakeBedrockClient(fail=True),
     )
@@ -133,13 +133,25 @@ def test_bedrock_failure_falls_back_safely() -> None:
 
 def test_bedrock_failure_can_be_strict() -> None:
     parser = BedrockPreferenceParser(
-        settings=Settings(adaptsg_mode="live"),
+        settings=Settings(adaptsg_mode="live", adaptsg_use_bedrock=True),
         catalog=VenueCatalog(),
         client=FakeBedrockClient(fail=True),
         allow_fallback=False,
     )
     with pytest.raises(ClientError):
         parser.parse("Plan it", journey_date=date(2026, 9, 2))
+
+
+def test_live_mode_does_not_call_bedrock_without_explicit_opt_in() -> None:
+    client = FakeBedrockClient(fail=True)
+    parser = BedrockPreferenceParser(
+        settings=Settings(adaptsg_mode="live"),
+        catalog=VenueCatalog(),
+        client=client,
+    )
+    outcome = parser.parse("Plan it", journey_date=date(2026, 9, 2))
+    assert outcome.source == "deterministic_fallback_v1"
+    assert client.calls == []
 
 
 def test_clean_json_rejects_non_json() -> None:

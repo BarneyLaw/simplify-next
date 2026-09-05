@@ -348,7 +348,8 @@ def main() -> None:
         "**Inclusive journey planning that preserves accessibility, health and budget limits "
         "when conditions change.**"
     )
-    st.info(mode_badge(mode))
+    if mode == "demo":
+        st.info(mode_badge(mode))
 
     with st.sidebar:
         st.header("Runtime")

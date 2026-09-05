@@ -144,6 +144,16 @@ class OneMapRoutingClient:
         }
         if not use_bfa:
             params["routeType"] = self._route_type(mode)
+        if mode is TravelMode.PUBLIC_TRANSPORT:
+            params.update(
+                {
+                    "date": depart_at.strftime("%m-%d-%Y"),
+                    "time": depart_at.strftime("%H:%M:%S"),
+                    "mode": "TRANSIT",
+                    "maxWalkDistance": str(max_walking_distance_m),
+                    "numItineraries": "1",
+                }
+            )
         try:
             response = self.client.get(
                 f"{self.base_url}{path}",
