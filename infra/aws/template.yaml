@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: AdaptSG cost-bounded Lambda API, durable journey state, and evidence storage.
+Description: AdaptSG authenticated production API with Cognito, cost-bounded Lambda, durable journey state, and evidence storage.
 
 Parameters:
   EnvironmentName:
@@ -30,13 +30,36 @@ Parameters:
     Description: DISABLED prevents inference; otherwise pass only the exact model/profile ARNs.
   EnablePointInTimeRecovery:
     Type: String
-    Default: "false"
+    Default: "true"
     AllowedValues: ["true", "false"]
   LambdaReservedConcurrency:
     Type: Number
     Default: 5
     MinValue: -1
     Description: Set to -1 to omit reserved concurrency in quota-constrained accounts.
+  UserPoolDomainPrefix:
+    Type: String
+  AuditRetentionDays:
+    Type: Number
+    MinValue: 1
+  RevokedConsentRetentionDays:
+    Type: Number
+    MinValue: 1
+  ConsentPolicyVersion:
+    Type: String
+    MinLength: 1
+  CatalogVersion:
+    Type: String
+    MinLength: 1
+  CostModelVersion:
+    Type: String
+    MinLength: 1
+  OneMapApiTokenParameter:
+    Type: AWS::SSM::Parameter::Value<String>
+    NoEcho: true
+  LtaAccountKeyParameter:
+    Type: AWS::SSM::Parameter::Value<String>
+    NoEcho: true
 
 Conditions:
   HasProviderSecret: !Not [!Equals [!Ref ProviderSecretName, ""]]
@@ -54,43 +77,111 @@ Globals:
     Tracing: Active
     Environment:
       Variables:
-        ADAPTSG_MODE: !Ref ApplicationMode
-        ADAPTSG_LOG_LEVEL: INFO
+        ADAPTSG_MODE: live
+        ADAPTSG_AUTHENTICATION_MODE: cognito
+        ADAPTSG_AUTHENTICATION_CONFIGURED: "true"
+        ADAPTSG_ENCRYPTION_CONFIGURED: "true"
+        ADAPTSG_AUDIT_STORAGE_CONFIGURED: "true"
+        ADAPTSG_PRODUCTION_RETENTION_CONFIGURED: "true"
+        ADAPTSG_LIVE_CATALOG_CONFIGURED: "true"
         ADAPTSG_JOURNEYS_TABLE: !Ref JourneyTable
+        ADAPTSG_AUDIT_RETENTION_DAYS: !Ref AuditRetentionDays
+        ADAPTSG_REVOKED_CONSENT_RETENTION_DAYS: !Ref RevokedConsentRetentionDays
+        ADAPTSG_CONSENT_POLICY_VERSION: !Ref ConsentPolicyVersion
+        ADAPTSG_CATALOG_VERSION: !Ref CatalogVersion
+        ADAPTSG_COST_MODEL_VERSION: !Ref CostModelVersion
+        AWS_XRAY_CONTEXT_MISSING: LOG_ERROR
         BEDROCK_MODEL_ID: !Ref BedrockModelId
-        ONEMAP_API_TOKEN: !If
-          - HasProviderSecret
-          - !Sub "{{resolve:secretsmanager:${ProviderSecretName}:SecretString:ONEMAP_API_TOKEN}}"
-          - ""
-        LTA_ACCOUNT_KEY: !If
-          - HasProviderSecret
-          - !Sub "{{resolve:secretsmanager:${ProviderSecretName}:SecretString:LTA_ACCOUNT_KEY}}"
-          - ""
+        ONEMAP_API_TOKEN: !Ref OneMapApiTokenParameter
+        LTA_ACCOUNT_KEY: !Ref LtaAccountKeyParameter
         DATA_GOV_SG_API_KEY: !If
           - HasProviderSecret
           - !Sub "{{resolve:secretsmanager:${ProviderSecretName}:SecretString:DATA_GOV_SG_API_KEY}}"
           - ""
 
 Resources:
+  CaregiverUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub ${AWS::StackName}-caregivers
+      UsernameAttributes: [email]
+      MfaConfiguration: OPTIONAL
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+
+  CaregiverUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref CaregiverUserPool
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - !Sub ${AdaptSgResourceServer}/journeys.read
+        - !Sub ${AdaptSgResourceServer}/journeys.write
+        - !Sub ${AdaptSgResourceServer}/consents.manage
+        - !Sub ${AdaptSgResourceServer}/audit.read
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs: [https://production.invalid/auth/callback]
+      LogoutURLs: [https://production.invalid/logout]
+
+  AdaptSgResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      Identifier: adaptsg
+      Name: AdaptSG production API scopes
+      UserPoolId: !Ref CaregiverUserPool
+      Scopes:
+        - ScopeName: journeys.read
+          ScopeDescription: Read owned journeys
+        - ScopeName: journeys.write
+          ScopeDescription: Create and mutate owned journeys
+        - ScopeName: consents.manage
+          ScopeDescription: Manage journey-planning consent
+        - ScopeName: audit.read
+          ScopeDescription: Read owned audit events
+
+  CaregiverUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref UserPoolDomainPrefix
+      UserPoolId: !Ref CaregiverUserPool
+
   JourneyTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      TableName: !Sub "${AWS::StackName}-journeys"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: pk
           AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
       KeySchema:
         - AttributeName: pk
           KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [PointInTimeRecoveryEnabled, true, false]
       SSESpecification:
         SSEEnabled: true
       TimeToLiveSpecification:
         AttributeName: expires_at
         Enabled: true
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: !If [PointInTimeRecoveryEnabled, true, false]
+      DeletionProtectionEnabled: true
       Tags:
+        - Key: adaptsg-schema-version
+          Value: "1"
         - Key: Application
           Value: AdaptSG
         - Key: Environment
@@ -150,47 +241,6 @@ Resources:
               Bool:
                 aws:SecureTransport: "false"
 
-  LambdaExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub "${AWS::StackName}-lambda"
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
-      Policies:
-        - PolicyName: AdaptSgRuntimeAccess
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Sid: JourneyStateOnly
-                Effect: Allow
-                Action:
-                  - dynamodb:DeleteItem
-                  - dynamodb:GetItem
-                  - dynamodb:PutItem
-                  - dynamodb:TransactWriteItems
-                  - dynamodb:UpdateItem
-                Resource: !GetAtt JourneyTable.Arn
-              - !If
-                - BedrockInferenceEnabled
-                - Sid: InvokeExplicitBedrockModels
-                  Effect: Allow
-                  Action: bedrock:InvokeModel
-                  Resource: !Ref BedrockModelArns
-                - !Ref AWS::NoValue
-      Tags:
-        - Key: Application
-          Value: AdaptSG
-        - Key: Environment
-          Value: !Ref EnvironmentName
-
   AdaptSgLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -202,6 +252,23 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  AdaptSgHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      Auth:
+        DefaultAuthorizer: CognitoJwtAuthorizer
+        Authorizers:
+          CognitoJwtAuthorizer:
+            JwtConfiguration:
+              issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CaregiverUserPool}
+              audience:
+                - !Ref CaregiverUserPoolClient
+      CorsConfiguration:
+        AllowOrigins: [https://production.invalid]
+        AllowHeaders: [authorization, content-type, idempotency-key]
+        AllowMethods: [GET, POST]
+
   AdaptSgFunction:
     Type: AWS::Serverless::Function
     DependsOn: AdaptSgLogGroup
@@ -211,12 +278,38 @@ Resources:
       FunctionName: !Sub "${AWS::StackName}-api"
       CodeUri: ../..
       Handler: adaptsg.aws_handler.handler
-      Description: AdaptSG validated plan and bounded-replan API.
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Description: AdaptSG caregiver-owned planning API.
       ReservedConcurrentExecutions: !If
         - HasLambdaReservedConcurrency
         - !Ref LambdaReservedConcurrency
         - !Ref AWS::NoValue
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JourneyTable
+        - Statement:
+            - Sid: InvokeConfiguredBedrockModel
+              Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/*
+            - Sid: ReadConfiguredProviderSecrets
+              Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/health
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /{proxy+}
+            Method: ANY
       FunctionUrlConfig:
         AuthType: AWS_IAM
         InvokeMode: BUFFERED
@@ -232,14 +325,10 @@ Resources:
             - x-amz-date
             - x-amz-security-token
           MaxAge: 300
-      Tags:
-        Application: AdaptSG
-        Environment: !Ref EnvironmentName
 
-  LambdaErrorAlarm:
+  Api5xxAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: AdaptSG Lambda returned an unhandled error.
       Namespace: AWS/Lambda
       MetricName: Errors
       Dimensions:
@@ -248,9 +337,8 @@ Resources:
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
-      DatapointsToAlarm: 1
       Threshold: 1
-      ComparisonOperator: GreaterThanOrEqualToThreshold
+      ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
 
   LambdaThrottleAlarm:
@@ -291,35 +379,26 @@ Resources:
                   [".", "Throttles", ".", "."]
                 ]
               }
-            },
-            {
-              "type": "metric",
-              "width": 12,
-              "height": 6,
-              "properties": {
-                "region": "${AWS::Region}",
-                "title": "Safety and replan evidence",
-                "view": "timeSeries",
-                "metrics": [
-                  ["AdaptSG", "ValidatedItinerary", "FunctionName", "${AdaptSgFunction}", "Mode", "${ApplicationMode}"],
-                  [".", "LoopCapHit", ".", ".", ".", "."],
-                  [".", "ToolVerificationSuccess", ".", ".", ".", "."],
-                  [".", "RetainedSegmentsPercent", ".", ".", ".", "."]
-                ]
-              }
             }
           ]
         }
 
 Outputs:
+  AdaptSgHttpApiUrl:
+    Description: Authenticated production HTTP API URL.
+    Value: !Sub https://${AdaptSgHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  CognitoIssuer:
+    Value: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CaregiverUserPool}
+  CognitoClientId:
+    Value: !Ref CaregiverUserPoolClient
+  JourneyTableName:
+    Value: !Ref JourneyTable
   AdaptSgFunctionName:
     Description: Lambda function name used by the deployment smoke test.
     Value: !Ref AdaptSgFunction
   AdaptSgFunctionUrl:
     Description: IAM-authenticated URL; callers must sign requests with SigV4.
     Value: !GetAtt AdaptSgFunctionUrl.FunctionUrl
-  JourneyTableName:
-    Value: !Ref JourneyTable
   EvidenceBucketName:
     Value: !Ref EvidenceBucket
   DashboardName:

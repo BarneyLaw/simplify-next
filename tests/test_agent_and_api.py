@@ -12,28 +12,50 @@ from pydantic import ValidationError
 
 import adaptsg.web_api as web_api
 from adaptsg.agent import (
+    ActionIntentService,
     AdaptSGService,
+    AuthorizationPolicy,
+    CapabilityResolver,
     DynamoDBJourneyStore,
+    InMemoryAuditStore,
+    InMemoryAuthorityStore,
+    InMemoryConsentStore,
     InMemoryJourneyStore,
     JourneyStore,
     build_service,
 )
 from adaptsg.domain import (
+    ActionRisk,
+    ActorRole,
     ApprovalDecision,
+    AuditEvent,
+    AuthorityGrant,
+    Capability,
+    CapabilityPolicy,
+    ConsentPurpose,
+    ConsentRecord,
+    FeatureFlag,
     Itinerary,
     JourneyRequest,
     JourneyState,
     JourneyStatus,
     MonitoringOutcome,
     ParseOutcome,
+    PrincipalContext,
     ReplanTrigger,
+    TransitionOutcome,
     TriggerType,
     ValidationCode,
     ValidationIssue,
     ValidationResult,
 )
 from adaptsg.errors import (
+    AuditUnavailable,
+    AuthorizationDenied,
+    CapabilityDisabled,
+    ConsentRequired,
     IdempotencyConflict,
+    IntentConflict,
     InvalidJourneyTransition,
     JourneyNotFound,
     NoFeasibleItinerary,
@@ -49,6 +71,199 @@ from adaptsg.settings import Settings
 from adaptsg.tools.catalog import VenueCatalog
 from adaptsg.tools.environment import DemoEnvironmentClient
 from adaptsg.web_api import create_app
+
+
+def test_live_mode_fails_closed_without_production_trust_configuration() -> None:
+    with pytest.raises(Exception, match="retention"):
+        build_service(Settings(adaptsg_mode="live"))
+
+
+def test_phase_two_models_reject_unknown_fields_and_prohibited_risk_is_typed() -> None:
+    with pytest.raises(ValidationError):
+        PrincipalContext.model_validate(
+            {"principal_id": "p", "account_id": "a", "authenticated": True, "extra": "nope"}
+        )
+    assert ActionRisk.PROHIBITED.value == "prohibited"
+
+
+def test_capabilities_default_off_and_prohibited_booking_write_cannot_be_enabled() -> None:
+    resolver = CapabilityResolver()
+    assert not resolver.enabled(Capability.BOOKING_READ)
+    assert not resolver.enabled(Capability.BOOKING_WRITE)
+    approved = CapabilityResolver(
+        CapabilityPolicy(
+            flags=frozenset({FeatureFlag.BOOKING_READ}),
+            production_retention_configured=True,
+        )
+    )
+    assert approved.enabled(Capability.BOOKING_READ, production=True)
+    with pytest.raises(CapabilityDisabled):
+        resolver.require(Capability.BOOKING_WRITE)
+
+
+def test_authorization_denies_anonymous_and_cross_account_without_active_grant() -> None:
+    policy = AuthorizationPolicy()
+    with pytest.raises(AuthorizationDenied):
+        policy.require(PrincipalContext(principal_id="p", account_id="a"), Capability.JOURNEY_READ)
+    caregiver = PrincipalContext(
+        principal_id="cg",
+        account_id="a",
+        roles=frozenset({ActorRole.CAREGIVER}),
+        authenticated=True,
+    )
+    with pytest.raises(Exception, match="authority grant"):
+        policy.require(caregiver, Capability.JOURNEY_READ, subject="traveller")
+
+
+def test_authority_grant_is_scoped_and_revocation_fails_closed() -> None:
+    now = datetime.now(UTC)
+    store = InMemoryAuthorityStore()
+    grant = AuthorityGrant(
+        subject="traveller",
+        delegate="cg",
+        issuer="traveller",
+        capabilities=frozenset({Capability.JOURNEY_READ}),
+        valid_from=now,
+        valid_until=now + timedelta(minutes=5),
+        scope=frozenset({"journey-1"}),
+    )
+    store.put(grant)
+    assert store.get("traveller", "cg").active_at(now)
+    revoked = store.revoke("traveller", "cg", at=now + timedelta(seconds=1))
+    assert not revoked.active_at(now + timedelta(seconds=2))
+
+
+def test_consent_withdrawal_blocks_processing_but_retains_record() -> None:
+    now = datetime.now(UTC)
+    store = InMemoryConsentStore()
+    record = store.create(
+        ConsentRecord(
+            subject="traveller",
+            policy_version="v1",
+            actor="traveller",
+            purpose=ConsentPurpose.JOURNEY_PLANNING,
+            data_categories=frozenset({"constraints"}),
+            granted_at=now,
+        ),
+        idempotency_key="consent-1",
+    )
+    revoked = store.revoke(record.id, expected_version=1, at=now + timedelta(seconds=1))
+    assert store.get(record.id).revoked_at == revoked.revoked_at
+    with pytest.raises(ConsentRequired):
+        AuthorizationPolicy(consent=store).require(
+            PrincipalContext(
+                principal_id="traveller",
+                account_id="a",
+                roles=frozenset({ActorRole.TRAVELLER}),
+                authenticated=True,
+            ),
+            Capability.JOURNEY_READ,
+            purpose=ConsentPurpose.JOURNEY_PLANNING,
+            categories=frozenset({"constraints"}),
+            now=now + timedelta(seconds=2),
+        )
+
+
+def test_action_intent_binds_payload_version_and_replays_identical_result() -> None:
+    clock = MutableClock(datetime(2026, 9, 1, 10, 0, tzinfo=UTC))
+    service = ActionIntentService(clock=clock)
+    principal = PrincipalContext(
+        principal_id="p", account_id="a", roles=frozenset({ActorRole.TRAVELLER}), authenticated=True
+    )
+    intent = service.issue(
+        principal=principal,
+        target="journey-1",
+        capability=Capability.JOURNEY_WRITE,
+        payload={"decision": "approve"},
+        expected_state_version=2,
+    )
+    assert (
+        service.consume(
+            intent.id,
+            principal=principal,
+            payload={"decision": "approve"},
+            state_version=2,
+            result="ok",
+        )
+        == "ok"
+    )
+    assert (
+        service.consume(
+            intent.id,
+            principal=principal,
+            payload={"decision": "approve"},
+            state_version=2,
+            result="different",
+        )
+        == "ok"
+    )
+    with pytest.raises(IntentConflict):
+        service.consume(
+            intent.id,
+            principal=principal,
+            payload={"decision": "reject"},
+            state_version=2,
+            result="bad",
+        )
+
+
+def test_action_intent_expiry_and_agent_issuance_are_denied() -> None:
+    clock = MutableClock(datetime(2026, 9, 1, 10, 0, tzinfo=UTC))
+    service = ActionIntentService(clock=clock)
+    agent = PrincipalContext(
+        principal_id="agent", account_id="a", roles=frozenset({ActorRole.AGENT}), authenticated=True
+    )
+    with pytest.raises(AuthorizationDenied):
+        service.issue(
+            principal=agent,
+            target="x",
+            capability=Capability.JOURNEY_WRITE,
+            payload={},
+            expected_state_version=1,
+        )
+    user = agent.model_copy(
+        update={"principal_id": "user", "roles": frozenset({ActorRole.TRAVELLER})}
+    )
+    intent = service.issue(
+        principal=user,
+        target="x",
+        capability=Capability.JOURNEY_WRITE,
+        payload={},
+        expected_state_version=1,
+    )
+    clock.value += timedelta(minutes=5)
+    with pytest.raises(IntentConflict, match="expired"):
+        service.consume(intent.id, principal=user, payload={}, state_version=1, result="x")
+
+
+def test_audit_chain_is_redacted_and_conditional_failure_blocks_append() -> None:
+    store = InMemoryAuditStore()
+    event = AuditEvent(
+        correlation_id=UUID(int=1),
+        actor_role=ActorRole.SYSTEM,
+        capability=Capability.JOURNEY_WRITE,
+        transition="approve",
+        outcome=TransitionOutcome.ACCEPTED,
+        timestamp=datetime.now(UTC),
+        metadata={"operation": "approve", "version": 2},
+    )
+    stored = store.append(event, expected_previous_hash=None)
+    assert stored.event_hash and stored.previous_hash is None
+    with pytest.raises(ValueError, match="sensitive"):
+        AuditEvent(
+            correlation_id=UUID(int=2),
+            actor_role=ActorRole.SYSTEM,
+            capability=Capability.JOURNEY_WRITE,
+            transition="x",
+            outcome=TransitionOutcome.REJECTED,
+            timestamp=datetime.now(UTC),
+            metadata={"prompt": "symptom canary"},
+        )
+    with pytest.raises(AuditUnavailable):
+        store.append(event, expected_previous_hash="0" * 64)
+    store.fail_writes = True
+    with pytest.raises(AuditUnavailable):
+        store.append(event, expected_previous_hash=stored.event_hash)
 
 
 class RaisingParser:
@@ -722,6 +937,181 @@ def test_presentation_rows_and_retention(itinerary: Itinerary, replanner: Journe
     assert retained_segment_percentage(itinerary, proposal.itinerary) == 67
     empty = itinerary.model_copy(update={"segments": (), "total_cost_sgd": 0})
     assert retained_segment_percentage(empty, itinerary) == 100
+
+
+def test_consent_store_find_current_is_typed_and_policy_bound() -> None:
+    now = datetime(2026, 9, 2, tzinfo=UTC)
+    store = InMemoryConsentStore()
+    record = store.create(
+        ConsentRecord(
+            subject="caregiver",
+            policy_version="policy-2",
+            actor="caregiver",
+            purpose=ConsentPurpose.JOURNEY_PLANNING,
+            data_categories=frozenset({"journey_input", "location_routing"}),
+            granted_at=now,
+        ),
+        idempotency_key="current-consent",
+    )
+    assert (
+        store.find_current(
+            subject="caregiver",
+            purpose=ConsentPurpose.JOURNEY_PLANNING,
+            categories=frozenset({"journey_input"}),
+            policy_version="policy-2",
+            now=now,
+        )
+        == record
+    )
+    assert (
+        store.find_current(
+            subject="caregiver",
+            purpose=ConsentPurpose.JOURNEY_PLANNING,
+            categories=frozenset({"journey_input"}),
+            policy_version="policy-1",
+            now=now,
+        )
+        is None
+    )
+
+
+def test_service_hides_other_owner_journey(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    service = make_service(planner, replanner)
+    draft = service.start_journey(
+        "Plan a safe day.", journey_date=date(2026, 9, 2), idempotency_key="owner-test-key"
+    )
+    other = PrincipalContext(
+        principal_id="other-caregiver",
+        account_id="other-caregiver",
+        roles=frozenset({ActorRole.CAREGIVER}),
+        authenticated=True,
+    )
+    with pytest.raises(JourneyNotFound):
+        service.get_journey(draft.journey_id, principal=other)
+
+
+def test_api_ignores_spoofed_identity_headers(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    client = TestClient(create_app(make_service(planner, replanner)))
+    response = client.post(
+        "/api/journeys",
+        headers={
+            "Idempotency-Key": "spoofed-header-key",
+            "X-Principal-ID": "attacker",
+            "X-Principal-Roles": "traveller",
+        },
+        json={"prompt": "Plan a safe day.", "journey_date": "2026-09-02"},
+    )
+    assert response.status_code == 200
+    assert response.json()["owner_principal_id"] == "demo-caregiver"
+
+
+def test_live_api_requires_gateway_claims(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    service = make_service(planner, replanner)
+    service.mode = "live"
+    client = TestClient(create_app(service))
+    response = client.post(
+        "/api/journeys",
+        headers={"Idempotency-Key": "live-claims-key"},
+        json={"prompt": "Plan a safe day.", "journey_date": "2026-09-02"},
+    )
+    assert response.status_code == 401
+
+
+def test_live_principal_adapter_reads_only_gateway_claims() -> None:
+    from starlette.requests import Request
+
+    request = Request(
+        {
+            "type": "http",
+            "aws.event": {
+                "requestContext": {
+                    "authorizer": {
+                        "jwt": {
+                            "claims": {
+                                "sub": "cognito-sub",
+                                "iss": "https://issuer.example",
+                                "aud": "client-id",
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    )
+    principal = web_api._principal(request, mode="live")
+    assert principal.principal_id == "cognito-sub"
+    assert principal.account_id == "cognito-sub"
+    assert principal.is_caregiver
+
+
+def test_action_intent_route_binds_decision(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    client = TestClient(create_app(make_service(planner, replanner)))
+    headers = {"Idempotency-Key": "intent-plan-key"}
+    draft = client.post(
+        "/api/journeys",
+        headers=headers,
+        json={"prompt": "Plan a safe day.", "journey_date": "2026-09-02"},
+    ).json()
+    target_id = draft["pending_initial_itinerary"]["id"]
+    intent = client.post(
+        f"/api/journeys/{draft['journey_id']}/action-intents",
+        headers={"Idempotency-Key": "intent-issue-key"},
+        json={"decision": "approve", "target_id": target_id, "expected_version": 1},
+    )
+    assert intent.status_code == 200
+    approved = client.post(
+        f"/api/journeys/{draft['journey_id']}/decision",
+        headers={"Idempotency-Key": "intent-consume-key"},
+        json={
+            "decision": "approve",
+            "target_id": target_id,
+            "expected_version": 1,
+            "intent_id": intent.json()["id"],
+        },
+    )
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "active"
+
+
+def test_api_consent_status_and_owner_audit(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    client = TestClient(create_app(make_service(planner, replanner)))
+    consent = client.post(
+        "/api/v1/consents",
+        headers={"Idempotency-Key": "api-consent-key"},
+        json={
+            "purpose": "journey_planning",
+            "data_categories": ["journey_input"],
+            "policy_version": "demo-policy",
+        },
+    )
+    assert consent.status_code == 200
+    status = client.get("/api/v1/consents/journey-planning/status")
+    assert status.status_code == 200
+    assert status.json()["active"] is True
+    revoked = client.post(
+        f"/api/v1/consents/{consent.json()['id']}/revoke",
+        json={"expected_version": 1},
+    )
+    assert revoked.status_code == 200
+    plan = client.post(
+        "/api/journeys",
+        headers={"Idempotency-Key": "audit-plan-key"},
+        json={"prompt": "Plan a safe day.", "journey_date": "2026-09-02"},
+    )
+    journey_id = plan.json()["journey_id"]
+    events = client.get(f"/api/journeys/{journey_id}/audit-events")
+    assert events.status_code == 200
+    assert events.json()[0]["metadata"]["operation"] == "start_journey"
 
 
 def test_fastapi_stateful_approval_replan_and_static_page(

@@ -33,9 +33,20 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 
 ## Verified baseline
 
+The current Role 1 trust scaffold was observed on `feature/r1-production-trust-foundations`
+before the production-hardening changes: 163 tests passed with 90.50% branch coverage under
+the local Python 3.13.7 virtual environment. This is not a completed Python 3.12 full-gate
+result.
+
+After the trust-foundation changes, the local Python 3.13.7 full gate observed 170 tests
+passing with 90.28% branch coverage. The dependency audit found no known vulnerabilities.
+SAM CLI and Python 3.12 are not installed in this workspace, so those checks remain pending.
+
 | Check | Result | Evidence |
 |---|---:|---|
-| Tests | 158 passed | `./scripts/check.ps1` on `feature/r4-aws-platform` |
+| Tests | 71 passed | `python -m pytest` |
+| Tests (trust scaffold) | 163 passed | `.venv/bin/python -m pytest -q` under Python 3.13.7 |
+| Tests (AWS platform branch baseline) | 158 passed | `./scripts/check.ps1` on `feature/r4-aws-platform` |
 | Named scenarios | 20 passed | `tests/test_evaluation_scenarios.py` |
 | Branch coverage | 92.87% | CI threshold is 90% |
 | Ruff format/lint | Passed | `scripts/check.ps1` |
@@ -56,6 +67,18 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 | LAN DNS/TLS/health | Passed | `sim-next.lab.packetcraft.dev` -> `192.168.1.250`; trusted HTTPS 200 |
 | Browser visual/session QA | Blocked | No in-app or extension browser connected in this session |
 
+## Production trust foundations in progress
+
+- [x] Created `feature/r1-production-trust-foundations` while preserving the six existing Role 1 files.
+- [x] Added server-owned journey owner and processing-consent references.
+- [x] Added demo-fixed and API Gateway-claim principal adapter seams; spoofable principal headers are ignored.
+- [x] Added consent policy/readiness settings, action-intent API shape, and production authority-route disablement.
+- [x] Replaced the public AWS Function URL template with an authenticated HTTP API/Cognito/DynamoDB shape.
+- [x] Added the single-caregiver ADR and point-in-time recovery runbook.
+- [ ] Complete transactional DynamoDB persistence for consent, intents and per-resource audit chains.
+- [ ] Add Cognito browser client, live allowlist verification and production telemetry/alarm coverage.
+- [ ] Run Python 3.12 full gate, SAM validate/build, staging AWS integration and restore drill.
+
 ## Current feature branches and merges
 
 The repository keeps each feature boundary visible and uses incremental commits.
@@ -71,6 +94,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/ci-tests` | 71 tests, 20 scenarios and CI/security gates | Merged |
 | `feature/project-documentation` | Governance, architecture, README and tracker | Merged |
 | `feature/kubernetes-dev-environment` | Role workflow, dev dependency and CI portability fix | PR #9 passing; merge blocked by review policy |
+| `feature/r3-redesigned-browser-client` | Rewrote `public/index.html` to the AdaptSG design-canvas redesign, frontend only | `scripts/check_web.mjs` and `tests/test_ui_browser_client.py`/`test_ui_demo_copy.py` pass; awaiting manual QA and merge |
 | `feature/r4-aws-platform` | DynamoDB/S3/IAM/observability stack and OIDC Lambda CI/CD | Full local gate passed; AWS deployment and review pending |
 
 ## External setup still required
@@ -139,4 +163,3 @@ Out of MVP scope:
 ## How to update this file
 
 Update the date and relevant section whenever a feature is merged, a gate changes, a provider is verified, a deployment is created/deleted or a blocker is discovered. Never turn a pending external check into “passed” based only on local mocks.
-
