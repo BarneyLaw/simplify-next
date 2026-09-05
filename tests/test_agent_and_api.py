@@ -1201,6 +1201,50 @@ def test_fastapi_stateful_approval_and_replan(
     assert rejected.json()["current_itinerary"]["id"] == active["current_itinerary"]["id"]
 
 
+def test_fastapi_accepts_lunch_time_change_trigger(
+    planner: JourneyPlanner,
+    replanner: JourneyReplanner,
+) -> None:
+    client = TestClient(create_app(make_service(planner, replanner)))
+    plan = client.post(
+        "/api/journeys",
+        headers={"Idempotency-Key": "http-lunch-plan"},
+        json={
+            "prompt": "Plan 10 am-5 pm for a wheelchair user, lunch by 1 pm, budget $70.",
+            "journey_date": "2026-09-01",
+        },
+    )
+    draft = plan.json()
+    approved = client.post(
+        f"/api/journeys/{draft['journey_id']}/decision",
+        headers={"Idempotency-Key": "http-lunch-approve"},
+        json={
+            "target_id": draft["pending_initial_itinerary"]["id"],
+            "decision": "approve",
+            "expected_version": draft["version"],
+        },
+    )
+    active = approved.json()
+
+    replanned = client.post(
+        f"/api/journeys/{draft['journey_id']}/replan",
+        headers={"Idempotency-Key": "http-lunch-replan"},
+        json={
+            "expected_version": active["version"],
+            "trigger": {
+                "type": "lunch_time_changed",
+                "message": "Lunch moved earlier",
+                "new_lunch_latest": "12:30:00",
+            },
+        },
+    )
+
+    assert replanned.status_code == 200
+    proposal = replanned.json()["latest_replan_proposal"]
+    assert proposal["validation"]["valid"]
+    assert proposal["itinerary"]["request"]["hard"]["lunch_latest"] == "12:30:00"
+
+
 def test_fastapi_rejects_invalid_and_infeasible_requests(
     planner: JourneyPlanner, replanner: JourneyReplanner
 ) -> None:

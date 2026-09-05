@@ -246,6 +246,8 @@ class TriggerType(StrEnum):
     VENUE_CLOSURE = "venue_closure"
     FATIGUE = "fatigue"
     BUDGET_REDUCTION = "budget_reduction"
+    LUNCH_TIME_CHANGED = "lunch_time_changed"
+    APPOINTMENT_CHANGED = "appointment_changed"
 
 
 class ProposalStatus(StrEnum):
@@ -481,6 +483,16 @@ class ReplanTrigger(StrictModel):
     message: str
     affected_venue_ids: frozenset[str] = frozenset()
     new_budget_sgd: float | None = Field(default=None, ge=0)
+    new_lunch_latest: time | None = None
+    new_finish_by: time | None = None
+
+    @model_validator(mode="after")
+    def changed_time_is_present(self) -> ReplanTrigger:
+        if self.type is TriggerType.LUNCH_TIME_CHANGED and self.new_lunch_latest is None:
+            raise ValueError("lunch time changes require new_lunch_latest")
+        if self.type is TriggerType.APPOINTMENT_CHANGED and self.new_finish_by is None:
+            raise ValueError("appointment time changes require new_finish_by")
+        return self
 
 
 class MonitoringOutcome(StrictModel):
