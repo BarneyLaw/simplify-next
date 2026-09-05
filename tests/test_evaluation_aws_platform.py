@@ -150,3 +150,17 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert "apigateway:TagResource" in execution_role
     assert "apigateway:UntagResource" in execution_role
     assert "apigateway:POST" in execution_role
+    for logs_action in (
+        "logs:CreateLogDelivery",
+        "logs:DeleteLogDelivery",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:DescribeResourcePolicies",
+        "logs:FilterLogEvents",
+        "logs:GetLogDelivery",
+        "logs:GetLogEvents",
+        "logs:ListLogDeliveries",
+        "logs:PutResourcePolicy",
+        "logs:UpdateLogDelivery",
+    ):
+        assert logs_action in execution_role

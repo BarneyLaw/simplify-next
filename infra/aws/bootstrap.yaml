@@ -237,14 +237,24 @@ Resources:
                   - cloudwatch:PutMetricAlarm
                   - cloudwatch:TagResource
                   - cloudwatch:UntagResource
+                  - logs:CreateLogDelivery
                   - logs:CreateLogGroup
+                  - logs:DeleteLogDelivery
                   - logs:DeleteLogGroup
                   - logs:DeleteRetentionPolicy
                   - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:DescribeResourcePolicies
+                  - logs:FilterLogEvents
+                  - logs:GetLogDelivery
+                  - logs:GetLogEvents
+                  - logs:ListLogDeliveries
                   - logs:ListTagsForResource
+                  - logs:PutResourcePolicy
                   - logs:PutRetentionPolicy
                   - logs:TagResource
                   - logs:UntagResource
+                  - logs:UpdateLogDelivery
                 Resource: "*"
               - Sid: ResolveProviderSecret
                 Effect: Allow
