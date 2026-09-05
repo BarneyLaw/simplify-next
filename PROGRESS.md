@@ -87,6 +87,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/ci-tests` | 71 tests, 20 scenarios and CI/security gates | Merged |
 | `feature/project-documentation` | Governance, architecture, README and tracker | Merged |
 | `feature/kubernetes-dev-environment` | Role workflow, dev dependency and CI portability fix | PR #9 passing; merge blocked by review policy |
+| `feature/r3-redesigned-browser-client` | Rewrote `public/index.html` to the AdaptSG design-canvas redesign, frontend only | `scripts/check_web.mjs` and `tests/test_ui_browser_client.py`/`test_ui_demo_copy.py` pass; awaiting manual QA and merge |
 
 ## External setup still required
 

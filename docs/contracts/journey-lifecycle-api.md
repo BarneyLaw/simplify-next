@@ -151,3 +151,26 @@ One thing worth keeping in mind for a deck or a demo: the boundary is enforced b
 both surfaces, but the journey store defaults to `InMemoryJourneyStore` (`storage_mode`
 `memory_demo`) unless `ADAPTSG_JOURNEYS_TABLE` is set. A restart drops every journey. That is a
 durability limit, not an approval limit.
+
+## Redesign claims deferred at the frontend boundary (2026-09-05, Role 3)
+
+The AdaptSG design-canvas redesign (`~/.claude/design-work/adaptsg/`) was ported into
+`public/index.html` on `feature/r3-redesigned-browser-client`, frontend only. Two of its claims
+could not be honestly rendered against the API as it stands today. Both are requests, not bugs —
+recorded here so the next Role 1 session sees them as asked-for rather than assumed.
+
+1. **"All 15 safety checks passed" on a draft plan (the design's B1).** No `ValidationResult`
+   reaches the client on the initial planning path — `Itinerary` carries no validation field, and
+   `JourneyState` only carries one inside `latest_replan_proposal`. The shipped client instead
+   says the plan "was checked against your must-haves before being offered, and it passed,"
+   without enumerating or counting checks. If a draft's `ValidationResult` becomes available on
+   `JourneyState` or `Itinerary`, the client can render the same rich detail it already renders
+   for a replan proposal's `proposal.validation`.
+2. **A stated replan cap and approval threshold (the design's B2/G6).** `GET /api/health` returns
+   only `{status, mode, storage}`; `adaptsg_approval_cost_increase_sgd` and
+   `adaptsg_max_replans` are server settings the client cannot see. Hardcoding either means an
+   env var change silently makes the UI lie, so the shipped client never names a threshold figure
+   and only learns the replan cap reactively, from the `replan_limit_reached` error text, after an
+   attempt fails. Exposing both settings on `/api/health` (or on `JourneyState`, e.g. a
+   `replan_limit_reached` boolean and a `max_replans` count) would let the composer disable itself
+   proactively and let the approval screen name the real threshold.
