@@ -15,6 +15,202 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ActorRole(StrEnum):
+    TRAVELLER = "traveller"
+    CAREGIVER = "caregiver"
+    CLINICIAN = "clinician"
+    SYSTEM = "system"
+    AGENT = "agent"
+
+
+class Capability(StrEnum):
+    JOURNEY_READ = "journey_read"
+    JOURNEY_WRITE = "journey_write"
+    CONSENT_MANAGE = "consent_manage"
+    ACTION_INTENT_ISSUE = "action_intent_issue"
+    AUDIT_READ = "audit_read"
+    BOOKING_READ = "booking_read"
+    BOOKING_WRITE = "booking_write"
+    MEDICAL_INTAKE = "medical_intake"
+    MEDICAL_CLINICIAN = "medical_clinician"
+    EMERGENCY_LIVE = "emergency_live"
+    MULTI_AGENT = "multi_agent"
+
+
+class ActionRisk(StrEnum):
+    READ_ONLY = "read_only"
+    USER_DECISION = "user_decision"
+    EXTERNAL_CONSEQUENTIAL = "external_consequential"
+    PROHIBITED = "prohibited"
+
+
+class ConsentPurpose(StrEnum):
+    JOURNEY_PLANNING = "journey_planning"
+    AUTHORITY_DELEGATION = "authority_delegation"
+    PROVIDER_TRANSACTION = "provider_transaction"
+    CLINICAL_INTAKE = "clinical_intake"
+    EMERGENCY_GUIDANCE = "emergency_guidance"
+    AUDIT_AND_SUPPORT = "audit_and_support"
+
+
+class FixtureStatus(StrEnum):
+    FIXTURE = "fixture"
+    LIVE = "live"
+
+
+class FeatureFlag(StrEnum):
+    BOOKING_READ = "booking_read"
+    BOOKING_WRITE = "booking_write"
+    MEDICAL_INTAKE = "medical_intake"
+    MEDICAL_CLINICIAN = "medical_clinician"
+    EMERGENCY_LIVE = "emergency_live"
+    MULTI_AGENT = "multi_agent"
+
+
+class TransitionOutcome(StrEnum):
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+        raise ValueError("timestamps must be timezone-aware")
+    return value
+
+
+class AuthorityGrant(StrictModel):
+    subject: str
+    delegate: str
+    capabilities: frozenset[Capability] = frozenset()
+    issuer: str
+    valid_from: datetime
+    valid_until: datetime
+    revoked_at: datetime | None = None
+    scope: frozenset[str] = frozenset()
+
+    @model_validator(mode="after")
+    def valid_window(self) -> AuthorityGrant:
+        for value in (self.valid_from, self.valid_until, self.revoked_at):
+            _aware(value)
+        if self.valid_until <= self.valid_from:
+            raise ValueError("authority grant validity window is invalid")
+        return self
+
+    def active_at(self, now: datetime) -> bool:
+        return self.revoked_at is None and self.valid_from <= now < self.valid_until
+
+
+class ConsentRecord(StrictModel):
+    id: UUID = Field(default_factory=uuid4)
+    subject: str
+    policy_version: str = Field(min_length=1, max_length=100)
+    actor: str
+    purpose: ConsentPurpose
+    data_categories: frozenset[str] = Field(min_length=1)
+    granted_at: datetime
+    revoked_at: datetime | None = None
+    version: int = Field(default=1, ge=1)
+    retention_expires_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def consent_timestamps(self) -> ConsentRecord:
+        _aware(self.granted_at)
+        _aware(self.revoked_at)
+        _aware(self.retention_expires_at)
+        if self.revoked_at is not None and self.revoked_at < self.granted_at:
+            raise ValueError("consent revoked_at must follow granted_at")
+        return self
+
+    def active_at(self, now: datetime) -> bool:
+        return self.revoked_at is None or self.revoked_at > now
+
+
+class SourceReference(StrictModel):
+    issuer: str
+    uri_or_document_version: str = Field(min_length=1)
+    retrieved_at: datetime
+    effective_at: datetime | None = None
+    expires_at: datetime | None = None
+    fixture_status: FixtureStatus
+    provider_reference: str | None = None
+
+    @model_validator(mode="after")
+    def source_timestamps(self) -> SourceReference:
+        for value in (self.retrieved_at, self.effective_at, self.expires_at):
+            _aware(value)
+        if self.expires_at is not None and self.expires_at <= self.retrieved_at:
+            raise ValueError("source expiry must follow retrieval")
+        return self
+
+
+class ActionIntent(StrictModel):
+    id: UUID = Field(default_factory=uuid4)
+    target: str
+    capability: Capability
+    payload_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    actor: str
+    expected_state_version: int = Field(ge=1)
+    issued_at: datetime
+    expires_at: datetime
+    nonce: str = Field(min_length=16, max_length=200)
+    required_approvals: frozenset[str] = frozenset()
+    used_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def intent_window(self) -> ActionIntent:
+        for value in (self.issued_at, self.expires_at, self.used_at):
+            _aware(value)
+        if self.expires_at <= self.issued_at:
+            raise ValueError("intent expiry must follow issuance")
+        return self
+
+
+_REDACTED_METADATA_KEYS = frozenset(
+    {"operation", "resource_type", "resource_id", "decision", "reason_code", "replay", "version"}
+)
+
+
+class AuditEvent(StrictModel):
+    event_id: UUID = Field(default_factory=uuid4)
+    correlation_id: UUID
+    causation_id: UUID | None = None
+    actor_role: ActorRole
+    capability: Capability
+    transition: str
+    outcome: TransitionOutcome
+    sources: tuple[SourceReference, ...] = ()
+    timestamp: datetime
+    metadata: dict[str, str | int | bool] = Field(default_factory=dict)
+    previous_hash: str | None = None
+    event_hash: str | None = None
+
+    @model_validator(mode="after")
+    def safe_audit(self) -> AuditEvent:
+        _aware(self.timestamp)
+        if set(self.metadata) - _REDACTED_METADATA_KEYS:
+            raise ValueError("audit metadata contains an undeclared or sensitive field")
+        return self
+
+
+class CapabilityPolicy(StrictModel):
+    flags: frozenset[FeatureFlag] = frozenset()
+    kill_switch: bool = False
+    disabled_capabilities: frozenset[Capability] = frozenset()
+    production_retention_configured: bool = False
+
+
+class PrincipalContext(StrictModel):
+    principal_id: str = Field(min_length=1, max_length=200)
+    account_id: str = Field(min_length=1, max_length=200)
+    roles: frozenset[ActorRole] = frozenset()
+    authenticated: bool = False
+
+    @property
+    def is_caregiver(self) -> bool:
+        return ActorRole.CAREGIVER in self.roles
+
+
 class AccessibilityStatus(StrEnum):
     VERIFIED = "verified"
     UNVERIFIED = "unverified"
@@ -128,6 +324,19 @@ class Venue(StrictModel):
     tags: tuple[str, ...] = ()
     data_source: str = "curated_demo_dataset"
     data_reviewed_on: date | None = None
+    hours_evidence: SourceReference | None = None
+    price_evidence: SourceReference | None = None
+    accessibility_evidence: SourceReference | None = None
+
+    @model_validator(mode="after")
+    def evidence_matches_accessibility(self) -> Venue:
+        if (
+            self.accessibility_status is AccessibilityStatus.VERIFIED
+            and self.accessibility_evidence is None
+            and self.data_source != "curated_demo_dataset"
+        ):
+            raise ValueError("verified live accessibility requires typed evidence")
+        return self
 
 
 class VenueSearchFilters(StrictModel):
@@ -330,6 +539,9 @@ class JourneyState(StrictModel):
     """Server-owned lifecycle state; only validated itineraries may be stored here."""
 
     journey_id: UUID = Field(default_factory=uuid4)
+    owner_principal_id: str = Field(default="demo-caregiver", min_length=1, max_length=200)
+    processing_consent_id: UUID | None = None
+    processing_consent_version: str | None = None
     status: JourneyStatus
     current_itinerary: Itinerary | None = None
     pending_initial_itinerary: Itinerary | None = None
@@ -379,3 +591,4 @@ class JourneyDecision(StrictModel):
     target_id: UUID
     decision: ApprovalDecision
     expected_version: int = Field(ge=1)
+    intent_id: UUID | None = None
