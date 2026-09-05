@@ -1,23 +1,43 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: AdaptSG serverless API using Lambda and Amazon Bedrock.
+Description: AdaptSG cost-bounded Lambda API, durable journey state, and evidence storage.
 
 Parameters:
+  EnvironmentName:
+    Type: String
+    Default: demo
+    AllowedValues: [demo, staging, production]
+  ApplicationMode:
+    Type: String
+    Default: demo
+    AllowedValues: [demo, live]
+    Description: Demo is deterministic and makes no Bedrock or live-provider calls.
+  AllowedCorsOrigin:
+    Type: String
+    Default: http://localhost:8501
+    AllowedPattern: ^https?://[^*]+$
+    Description: Exact trusted browser origin; wildcards are rejected.
+  ProviderSecretName:
+    Type: String
+    Default: ""
+    Description: Optional Secrets Manager name with OneMap, LTA, and data.gov.sg JSON keys.
   BedrockModelId:
     Type: String
     Default: global.anthropic.claude-haiku-4-5-20251001-v1:0
-  OneMapApiToken:
+  BedrockModelArns:
+    Type: CommaDelimitedList
+    Default: DISABLED
+    Description: DISABLED prevents inference; otherwise pass only the exact model/profile ARNs.
+  EnablePointInTimeRecovery:
     Type: String
-    NoEcho: true
-    Default: ""
-  LtaAccountKey:
-    Type: String
-    NoEcho: true
-    Default: ""
-  DataGovSgApiKey:
-    Type: String
-    NoEcho: true
-    Default: ""
+    Default: "false"
+    AllowedValues: ["true", "false"]
+
+Conditions:
+  HasProviderSecret: !Not [!Equals [!Ref ProviderSecretName, ""]]
+  BedrockInferenceEnabled: !Not
+    - !Equals [!Join ["", !Ref BedrockModelArns], DISABLED]
+  PointInTimeRecoveryEnabled: !Equals [!Ref EnablePointInTimeRecovery, "true"]
 
 Globals:
   Function:
@@ -28,37 +48,273 @@ Globals:
     Tracing: Active
     Environment:
       Variables:
-        ADAPTSG_MODE: live
+        ADAPTSG_MODE: !Ref ApplicationMode
+        ADAPTSG_LOG_LEVEL: INFO
+        ADAPTSG_JOURNEYS_TABLE: !Ref JourneyTable
         BEDROCK_MODEL_ID: !Ref BedrockModelId
-        ONEMAP_API_TOKEN: !Ref OneMapApiToken
-        LTA_ACCOUNT_KEY: !Ref LtaAccountKey
-        DATA_GOV_SG_API_KEY: !Ref DataGovSgApiKey
+        ONEMAP_API_TOKEN: !If
+          - HasProviderSecret
+          - !Sub "{{resolve:secretsmanager:${ProviderSecretName}:SecretString:ONEMAP_API_TOKEN}}"
+          - ""
+        LTA_ACCOUNT_KEY: !If
+          - HasProviderSecret
+          - !Sub "{{resolve:secretsmanager:${ProviderSecretName}:SecretString:LTA_ACCOUNT_KEY}}"
+          - ""
+        DATA_GOV_SG_API_KEY: !If
+          - HasProviderSecret
+          - !Sub "{{resolve:secretsmanager:${ProviderSecretName}:SecretString:DATA_GOV_SG_API_KEY}}"
+          - ""
 
 Resources:
+  JourneyTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-journeys"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [PointInTimeRecoveryEnabled, true, false]
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  EvidenceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::AccountId}-${AWS::Region}-${AWS::StackName}-evidence"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTemporaryEvaluationArtifacts
+            Status: Enabled
+            Prefix: temporary/
+            ExpirationInDays: 14
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  EvidenceBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref EvidenceBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt EvidenceBucket.Arn
+              - !Sub "${EvidenceBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-lambda"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
+      Policies:
+        - PolicyName: AdaptSgRuntimeAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: JourneyStateOnly
+                Effect: Allow
+                Action:
+                  - dynamodb:DeleteItem
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:TransactWriteItems
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt JourneyTable.Arn
+              - !If
+                - BedrockInferenceEnabled
+                - Sid: InvokeExplicitBedrockModels
+                  Effect: Allow
+                  Action: bedrock:InvokeModel
+                  Resource: !Ref BedrockModelArns
+                - !Ref AWS::NoValue
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  AdaptSgLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-api"
+      RetentionInDays: 14
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
   AdaptSgFunction:
     Type: AWS::Serverless::Function
+    DependsOn: AdaptSgLogGroup
     Metadata:
       BuildMethod: makefile
     Properties:
+      FunctionName: !Sub "${AWS::StackName}-api"
       CodeUri: ../..
       Handler: adaptsg.aws_handler.handler
-      Description: AdaptSG plan and replan API.
-      Policies:
-        - Statement:
-            - Sid: InvokeConfiguredBedrockModels
-              Effect: Allow
-              Action:
-                - bedrock:InvokeModel
-              Resource: "*"
+      Description: AdaptSG validated plan and bounded-replan API.
+      Role: !GetAtt LambdaExecutionRole.Arn
+      ReservedConcurrentExecutions: 5
       FunctionUrlConfig:
-        AuthType: NONE
+        AuthType: AWS_IAM
+        InvokeMode: BUFFERED
         Cors:
-          AllowOrigins: ["*"]
+          AllowCredentials: false
+          AllowOrigins: [!Ref AllowedCorsOrigin]
           AllowMethods: [GET, POST]
-          AllowHeaders: [content-type]
+          AllowHeaders:
+            - authorization
+            - content-type
+            - idempotency-key
+            - x-amz-content-sha256
+            - x-amz-date
+            - x-amz-security-token
           MaxAge: 300
+      Tags:
+        Application: AdaptSG
+        Environment: !Ref EnvironmentName
+
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: AdaptSG Lambda returned an unhandled error.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AdaptSgFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  LambdaThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: AdaptSG reached its reserved-concurrency cost boundary.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AdaptSgFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  AdaptSgDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${AWS::StackName}-operations"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "region": "${AWS::Region}",
+                "title": "Requests, errors, and throttles",
+                "view": "timeSeries",
+                "metrics": [
+                  ["AWS/Lambda", "Invocations", "FunctionName", "${AdaptSgFunction}"],
+                  [".", "Errors", ".", "."],
+                  [".", "Throttles", ".", "."]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "region": "${AWS::Region}",
+                "title": "Safety and replan evidence",
+                "view": "timeSeries",
+                "metrics": [
+                  ["AdaptSG", "ValidatedItinerary", "FunctionName", "${AdaptSgFunction}", "Mode", "${ApplicationMode}"],
+                  [".", "LoopCapHit", ".", ".", ".", "."],
+                  [".", "ToolVerificationSuccess", ".", ".", ".", "."],
+                  [".", "RetainedSegmentsPercent", ".", ".", ".", "."]
+                ]
+              }
+            }
+          ]
+        }
 
 Outputs:
+  AdaptSgFunctionName:
+    Description: Lambda function name used by the deployment smoke test.
+    Value: !Ref AdaptSgFunction
   AdaptSgFunctionUrl:
-    Description: Public hackathon demo API URL. Add production authentication before launch.
+    Description: IAM-authenticated URL; callers must sign requests with SigV4.
     Value: !GetAtt AdaptSgFunctionUrl.FunctionUrl
+  JourneyTableName:
+    Value: !Ref JourneyTable
+  EvidenceBucketName:
+    Value: !Ref EvidenceBucket
+  DashboardName:
+    Value: !Ref AdaptSgDashboard
+  BedrockStatus:
+    Description: DISABLED means the Lambda role cannot invoke Bedrock or consume model tokens.
+    Value: !If [BedrockInferenceEnabled, CONNECTED, DISABLED]
