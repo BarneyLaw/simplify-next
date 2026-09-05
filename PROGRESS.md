@@ -4,7 +4,7 @@ Last updated: 2026-09-05 (Asia/Singapore)
 
 ## Current status
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The first AWS Lambda/DynamoDB/S3 stack and zero-token smoke path are deployed. The authenticated AWS v2 code is merged; its first update rolled back because the CloudFormation role lacked API Gateway tagging permissions. The bootstrap role is corrected and rollback is complete, with the empty orphaned v2 table removed. Redeployment of the rollback-safe template remains pending. Live provider mode remains pending credentials, provider approvals, and an independent Bedrock-disable contract switch.
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The first AWS Lambda/DynamoDB/S3 stack and zero-token smoke path are deployed. The authenticated AWS v2 code and rollback hardening are merged. Its second update reached HTTP API creation but rolled back because the CloudFormation role lacked the CloudWatch Logs delivery permissions required to activate API Gateway access logging. The original stack resources remain available, and the rollback-safe replacement table cleaned up successfully. The scoped bootstrap permission fix is in progress. Live provider mode remains pending credentials, provider approvals, and an independent Bedrock-disable contract switch.
 
 ## Completed milestones
 
@@ -102,8 +102,9 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/kubernetes-dev-environment` | Role workflow, dev dependency and CI portability fix | PR #9 passing; merge blocked by review policy |
 | `feature/r3-redesigned-browser-client` | Rewrote `public/index.html` to the AdaptSG design-canvas redesign, frontend only | `scripts/check_web.mjs` and `tests/test_ui_browser_client.py`/`test_ui_demo_copy.py` pass; awaiting manual QA and merge |
 | `feature/r4-aws-platform` | DynamoDB/S3/IAM/observability stack and OIDC Lambda CI/CD | Full local gate passed; AWS deployment and review pending |
-| `feature/r4-authenticated-aws-demo` | Reconcile Cognito/API Gateway and owner-scoped v2 state with token-free AWS deployment | In progress; provider credentials intentionally absent |
-| `feature/r4-aws-recovery-hardening` | API Gateway deployment permission, rollback-safe DynamoDB protection and local CloudFormation lint | In progress; locally verified and bootstrap applied |
+| `feature/r4-authenticated-aws-demo` | Reconcile Cognito/API Gateway and owner-scoped v2 state with token-free AWS deployment | Merged; provider credentials intentionally absent |
+| `feature/r4-aws-recovery-hardening` | API Gateway deployment permission, rollback-safe DynamoDB protection and local CloudFormation lint | Merged; second deployment rolled back at access-log activation |
+| `feature/r4-api-log-delivery-permissions` | CloudWatch Logs delivery permissions required by authenticated HTTP API access logging | In progress; regression and deployment verification pending |
 
 ## External setup still required
 
