@@ -367,6 +367,7 @@ def test_live_environment_combines_official_feeds(catalog: VenueCatalog) -> None
     assert "national-gallery" in snapshot.flood_affected_venue_ids
     assert snapshot.disrupted_route_labels == frozenset({"NSL"})
     assert snapshot.observed_at.isoformat() == "2026-09-01T10:15:00+08:00"
+    assert snapshot.freshness is FreshnessStatus.STALE
 
 
 def test_live_environment_requires_lta_key(catalog: VenueCatalog) -> None:

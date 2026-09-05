@@ -68,6 +68,7 @@ def test_soft_venue_is_kept_initially_but_replaceable(
     assert proposal.validation.valid
     assert proposal.itinerary.segments[2].venue.indoor
     assert proposal.itinerary.segments[:2] == plan.segments[:2]
+    assert proposal.requires_approval
 
 
 def test_fatigue_adds_one_taxi_and_requires_cost_approval(

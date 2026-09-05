@@ -4,7 +4,7 @@ Last updated: 2026-09-05 (Asia/Singapore)
 
 ## Current status
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. Live provider mode remains pending credentials and provider approvals.
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. Role 4's AWS platform branch now provisions the durable/security/observability path and passes the full local gate; actual AWS deployment remains pending account bootstrap and credentials. Live provider mode remains pending credentials, provider approvals, and an independent Bedrock-disable contract switch.
 
 ## Completed milestones
 
@@ -18,6 +18,9 @@ Starter codebase complete and locally verified. The deterministic demo is ready 
 - [x] Added a bounded LangGraph planning flow.
 - [x] Added deterministic validation for accessibility, walking, time, lunch, rest, budget, opening hours, provenance and loop limits.
 - [x] Added minimal-change replanning and caregiver cost approval.
+- [x] Added server-owned journey lifecycle routes with draft approval, monitoring, replanning and version conflicts.
+- [x] Added deterministic in-memory demo storage and a DynamoDB JSON/TTL storage adapter.
+- [x] Added idempotency-key replay for journey creation, decisions and replans.
 - [x] Added the full Streamlit demo and lightweight Vercel web mode.
 - [x] Added Docker, Vercel and AWS SAM deployment files.
 - [x] Added 71 tests, including 20 named evaluation scenarios.
@@ -41,19 +44,23 @@ SAM CLI and Python 3.12 are not installed in this workspace, so those checks rem
 
 | Check | Result | Evidence |
 |---|---:|---|
-| Tests | 163 passed | `.venv/bin/python -m pytest -q` under Python 3.13.7 |
+| Tests | 71 passed | `python -m pytest` |
+| Tests (trust scaffold) | 163 passed | `.venv/bin/python -m pytest -q` under Python 3.13.7 |
+| Tests (AWS platform branch baseline) | 158 passed | `./scripts/check.ps1` on `feature/r4-aws-platform` |
 | Named scenarios | 20 passed | `tests/test_evaluation_scenarios.py` |
-| Branch coverage | 98.1% | CI threshold is 90% |
+| Branch coverage | 92.87% | CI threshold is 90% |
 | Ruff format/lint | Passed | `scripts/check.ps1` |
 | Strict mypy | Passed | 25 source/test modules checked |
 | Bandit | Passed | Source, API and Streamlit entry point |
 | Dependency audit | Passed | No known vulnerabilities after minimum-version update |
 | Streamlit headless flow | Passed | Initial plan, rain proposal, apply and fatigue approval |
 | FastAPI plan/replan | Passed | Local `TestClient` integration |
-| Vercel browser JS syntax | Passed | `scripts/check_web.mjs` |
+| Vercel browser JS syntax | Passed | `scripts/check_web.mjs`; lifecycle client uses server-owned journey routes |
 | Live provider parsers | Passed with mocks | Bedrock, OneMap, data.gov.sg, LTA/PUB |
 | Docker image build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
 | SAM validate/build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
+| AWS CloudFormation schemas | Passed locally | `cfn-lint` 1.56.0 on application and OIDC bootstrap templates |
+| AWS Lambda/DynamoDB deployment smoke | Blocked; fix prepared | OIDC and SAM transform succeed; workshop Lambda quota cannot support reserved concurrency while retaining ten unreserved executions |
 | Vercel platform build | Pending deployment | Vercel CLI/account unavailable locally |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
@@ -88,6 +95,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/project-documentation` | Governance, architecture, README and tracker | Merged |
 | `feature/kubernetes-dev-environment` | Role workflow, dev dependency and CI portability fix | PR #9 passing; merge blocked by review policy |
 | `feature/r3-redesigned-browser-client` | Rewrote `public/index.html` to the AdaptSG design-canvas redesign, frontend only | `scripts/check_web.mjs` and `tests/test_ui_browser_client.py`/`test_ui_demo_copy.py` pass; awaiting manual QA and merge |
+| `feature/r4-aws-platform` | DynamoDB/S3/IAM/observability stack and OIDC Lambda CI/CD | Full local gate passed; AWS deployment and review pending |
 
 ## External setup still required
 
@@ -100,7 +108,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
 8. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
 9. Deploy the Vercel demo and inspect it in a connected browser at desktop and mobile widths.
-10. Deploy the SAM stack, test the Function URL, then delete it when not in use.
+10. Merge the quota-compatible optional Lambda concurrency change, rerun the protected `aws-demo` deployment, and retain the first Lambda/DynamoDB smoke evidence.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
 
@@ -119,10 +127,10 @@ Priority 1:
 - [ ] Add caregiver/user evidence and cite it in the problem slide.
 - [ ] Build the maximum 10-slide presentation.
 - [ ] Record/caption the maximum five-minute demo video.
-- [ ] Add structured CloudWatch metrics for latency, retained segments, tool success and loop caps.
-- [ ] Add DynamoDB on-demand journey persistence and idempotency.
-- [ ] Move production secrets to Secrets Manager or SSM.
-- [ ] Replace public Function URL access with authentication and restricted CORS.
+- [x] Add structured CloudWatch metrics for latency, retained segments, tool success and loop caps.
+- [x] Add DynamoDB conditional writes for race-safe duplicate decisions/replans.
+- [x] Move AWS provider configuration to Secrets Manager dynamic references.
+- [x] Replace public Function URL access with IAM authentication and restricted CORS.
 
 Out of MVP scope:
 
@@ -149,7 +157,7 @@ Out of MVP scope:
 - **Curated venues:** reliability and unsupported-claim prevention outweigh catalog breadth in the MVP.
 - **Smallest change:** candidate scoring heavily penalizes changed segments before cost/walking tie-breakers.
 - **Dual web mode:** Streamlit remains the full UI; Vercel uses static HTML plus FastAPI because Streamlit is not a native serverless/WebSocket fit.
-- **Serverless AWS:** Lambda and Bedrock on demand avoid the always-on services warned against in the hackathon material.
+- **Serverless AWS:** Lambda, DynamoDB on demand and optional Bedrock avoid always-on compute; Bedrock permission is disabled during the token-constrained phase.
 - **Demo/live separation:** deterministic adapters keep CI and the recorded story reproducible while live adapters remain independently testable.
 
 ## How to update this file
