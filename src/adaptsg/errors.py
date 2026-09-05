@@ -51,3 +51,35 @@ class StaleJourneyVersion(JourneyConflict):
 
 class InvalidJourneyTransition(JourneyConflict):
     """Raised when a decision or replan is invalid for the lifecycle state."""
+
+
+class AuthorizationDenied(AdaptSGError):
+    """Raised when the authenticated principal cannot perform an operation."""
+
+
+class AuthenticationRequired(AuthorizationDenied):
+    """Raised when no verified production principal is available."""
+
+
+class ConsentRequired(AuthorizationDenied):
+    """Raised when explicit, current consent is absent or withdrawn."""
+
+
+class AuthorityGrantRequired(AuthorizationDenied):
+    """Raised when a caregiver lacks a current scoped grant."""
+
+
+class CapabilityDisabled(AuthorizationDenied):
+    """Raised when a server-side feature flag or kill switch denies a capability."""
+
+
+class IntentConflict(JourneyConflict):
+    """Raised for stale, replayed, or payload-conflicting action intents."""
+
+
+class AuditUnavailable(AdaptSGError):
+    """Raised when an audit append cannot be durably confirmed."""
+
+
+class RetentionConfigurationMissing(AdaptSGError):
+    """Raised when production retention policy is absent."""
