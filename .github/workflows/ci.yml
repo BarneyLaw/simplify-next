@@ -111,6 +111,8 @@ jobs:
       AWS_SAM_ARTIFACT_BUCKET: ${{ vars.AWS_SAM_ARTIFACT_BUCKET }}
       ADAPTSG_STACK_NAME: ${{ vars.ADAPTSG_STACK_NAME || 'adaptsg-demo' }}
       ADAPTSG_ALLOWED_CORS_ORIGIN: ${{ vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8501' }}
+      ADAPTSG_COGNITO_CALLBACK_URL: ${{ vars.ADAPTSG_COGNITO_CALLBACK_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8501' }}
+      ADAPTSG_COGNITO_LOGOUT_URL: ${{ vars.ADAPTSG_COGNITO_LOGOUT_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8501' }}
       ADAPTSG_PROVIDER_SECRET_NAME: ${{ vars.ADAPTSG_PROVIDER_SECRET_NAME }}
     steps:
       - uses: actions/checkout@v4
@@ -141,7 +143,7 @@ jobs:
       - name: Verify assumed AWS identity
         run: |
           aws sts get-caller-identity
-      - name: Build and deploy the token-free demo stack
+      - name: Build and deploy the token-free authenticated demo stack
         shell: bash
         run: |
           set -euo pipefail
@@ -150,8 +152,11 @@ jobs:
             "EnvironmentName=demo"
             "ApplicationMode=demo"
             "AllowedCorsOrigin=${ADAPTSG_ALLOWED_CORS_ORIGIN}"
+            "CognitoCallbackUrl=${ADAPTSG_COGNITO_CALLBACK_URL}"
+            "CognitoLogoutUrl=${ADAPTSG_COGNITO_LOGOUT_URL}"
             "BedrockModelArns=DISABLED"
             "EnablePointInTimeRecovery=false"
+            "EnableDeletionProtection=false"
             "LambdaReservedConcurrency=-1"
           )
           if [[ -n "${ADAPTSG_PROVIDER_SECRET_NAME}" ]]; then
@@ -235,6 +240,29 @@ jobs:
           assert journey["token_usage"] == {"input_tokens": 0, "output_tokens": 0}, journey
           print("Lambda/DynamoDB smoke test passed; Bedrock token usage is zero.")
           PY
+      - name: Verify public health and protected user routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_url=$(aws cloudformation describe-stacks \
+            --stack-name "${ADAPTSG_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='AdaptSgHttpApiUrl'].OutputValue" \
+            --output text)
+          health_status=$(curl --silent --show-error --output health-response.json \
+            --write-out '%{http_code}' "${api_url}/api/health")
+          [[ "${health_status}" == "200" ]]
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          health = json.loads(Path("health-response.json").read_text(encoding="utf-8"))
+          assert health == {"status": "ok", "mode": "demo", "storage": "dynamodb"}, health
+          PY
+          protected_status=$(curl --silent --show-error --output protected-response.json \
+            --write-out '%{http_code}' \
+            "${api_url}/api/journeys/00000000-0000-0000-0000-000000000000")
+          [[ "${protected_status}" == "401" ]]
+          echo "API Gateway health passed and the user route rejected an unsigned request."
       - name: Publish versioned catalog and evaluation evidence
         shell: bash
         run: |

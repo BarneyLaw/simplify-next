@@ -17,6 +17,26 @@ Parameters:
     Default: http://localhost:8501
     AllowedPattern: ^https?://[^*]+$
     Description: Exact trusted browser origin; wildcards are rejected.
+  CognitoCallbackUrl:
+    Type: String
+    Default: http://localhost:8501
+    Description: Exact browser OAuth callback URL, including its callback path when used.
+    AllowedPattern: ^https?://[^*]+$
+  CognitoLogoutUrl:
+    Type: String
+    Default: http://localhost:8501
+    Description: Exact browser destination after Cognito logout.
+    AllowedPattern: ^https?://[^*]+$
+  ApiThrottleBurstLimit:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 1000
+  ApiThrottleRateLimit:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 1000
   ProviderSecretName:
     Type: String
     Default: ""
@@ -32,40 +52,53 @@ Parameters:
     Type: String
     Default: "true"
     AllowedValues: ["true", "false"]
+  EnableDeletionProtection:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Enable only after initial deployment and restore verification are complete.
   LambdaReservedConcurrency:
     Type: Number
     Default: 5
     MinValue: -1
     Description: Set to -1 to omit reserved concurrency in quota-constrained accounts.
-  UserPoolDomainPrefix:
-    Type: String
   AuditRetentionDays:
     Type: Number
+    Default: 90
     MinValue: 1
+    MaxValue: 3650
   RevokedConsentRetentionDays:
     Type: Number
+    Default: 30
     MinValue: 1
+    MaxValue: 3650
   ConsentPolicyVersion:
     Type: String
+    Default: consent-v1
     MinLength: 1
   CatalogVersion:
     Type: String
+    Default: curated-sg-v1
     MinLength: 1
   CostModelVersion:
     Type: String
+    Default: transport-cost-policy-v1
     MinLength: 1
-  OneMapApiTokenParameter:
-    Type: AWS::SSM::Parameter::Value<String>
-    NoEcho: true
-  LtaAccountKeyParameter:
-    Type: AWS::SSM::Parameter::Value<String>
-    NoEcho: true
+  InputTokenTariffSgd:
+    Type: Number
+    Default: 0
+    MinValue: 0
+  OutputTokenTariffSgd:
+    Type: Number
+    Default: 0
+    MinValue: 0
 
 Conditions:
   HasProviderSecret: !Not [!Equals [!Ref ProviderSecretName, ""]]
   BedrockInferenceEnabled: !Not
     - !Equals [!Join ["", !Ref BedrockModelArns], DISABLED]
   PointInTimeRecoveryEnabled: !Equals [!Ref EnablePointInTimeRecovery, "true"]
+  DeletionProtectionEnabled: !Equals [!Ref EnableDeletionProtection, "true"]
   HasLambdaReservedConcurrency: !Not [!Equals [!Ref LambdaReservedConcurrency, -1]]
 
 Globals:
@@ -77,7 +110,8 @@ Globals:
     Tracing: Active
     Environment:
       Variables:
-        ADAPTSG_MODE: live
+        ADAPTSG_MODE: !Ref ApplicationMode
+        ADAPTSG_BEDROCK_ENABLED: !If [BedrockInferenceEnabled, "true", "false"]
         ADAPTSG_AUTHENTICATION_MODE: cognito
         ADAPTSG_AUTHENTICATION_CONFIGURED: "true"
         ADAPTSG_ENCRYPTION_CONFIGURED: "true"
@@ -90,10 +124,20 @@ Globals:
         ADAPTSG_CONSENT_POLICY_VERSION: !Ref ConsentPolicyVersion
         ADAPTSG_CATALOG_VERSION: !Ref CatalogVersion
         ADAPTSG_COST_MODEL_VERSION: !Ref CostModelVersion
+        ADAPTSG_INPUT_TOKEN_TARIFF_SGD: !Ref InputTokenTariffSgd
+        ADAPTSG_OUTPUT_TOKEN_TARIFF_SGD: !Ref OutputTokenTariffSgd
+        ADAPTSG_COGNITO_ISSUER: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CaregiverUserPool}
+        ADAPTSG_COGNITO_AUDIENCE: !Ref CaregiverUserPoolClient
         AWS_XRAY_CONTEXT_MISSING: LOG_ERROR
         BEDROCK_MODEL_ID: !Ref BedrockModelId
-        ONEMAP_API_TOKEN: !Ref OneMapApiTokenParameter
-        LTA_ACCOUNT_KEY: !Ref LtaAccountKeyParameter
+        ONEMAP_API_TOKEN: !If
+          - HasProviderSecret
+          - !Sub "{{resolve:secretsmanager:${ProviderSecretName}:SecretString:ONEMAP_API_TOKEN}}"
+          - ""
+        LTA_ACCOUNT_KEY: !If
+          - HasProviderSecret
+          - !Sub "{{resolve:secretsmanager:${ProviderSecretName}:SecretString:LTA_ACCOUNT_KEY}}"
+          - ""
         DATA_GOV_SG_API_KEY: !If
           - HasProviderSecret
           - !Sub "{{resolve:secretsmanager:${ProviderSecretName}:SecretString:DATA_GOV_SG_API_KEY}}"
@@ -105,7 +149,18 @@ Resources:
     Properties:
       UserPoolName: !Sub ${AWS::StackName}-caregivers
       UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      UsernameConfiguration:
+        CaseSensitive: false
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
       MfaConfiguration: OPTIONAL
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
       Policies:
         PasswordPolicy:
           MinimumLength: 12
@@ -113,25 +168,42 @@ Resources:
           RequireNumbers: true
           RequireSymbols: true
           RequireUppercase: true
+          TemporaryPasswordValidityDays: 1
+      UserPoolTags:
+        Application: AdaptSG
+        Environment: !Ref EnvironmentName
 
   CaregiverUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
+    DependsOn: AdaptSgResourceServer
     Properties:
       UserPoolId: !Ref CaregiverUserPool
       GenerateSecret: false
       PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AccessTokenValidity: 15
+      IdTokenValidity: 15
+      RefreshTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
       AllowedOAuthFlowsUserPoolClient: true
       AllowedOAuthFlows: [code]
       AllowedOAuthScopes:
         - openid
         - email
-        - !Sub ${AdaptSgResourceServer}/journeys.read
-        - !Sub ${AdaptSgResourceServer}/journeys.write
-        - !Sub ${AdaptSgResourceServer}/consents.manage
-        - !Sub ${AdaptSgResourceServer}/audit.read
+        - adaptsg/journeys.read
+        - adaptsg/journeys.write
+        - adaptsg/consents.manage
+        - adaptsg/audit.read
       SupportedIdentityProviders: [COGNITO]
-      CallbackURLs: [https://production.invalid/auth/callback]
-      LogoutURLs: [https://production.invalid/logout]
+      CallbackURLs: [!Ref CognitoCallbackUrl]
+      LogoutURLs: [!Ref CognitoLogoutUrl]
 
   AdaptSgResourceServer:
     Type: AWS::Cognito::UserPoolResourceServer
@@ -152,7 +224,7 @@ Resources:
   CaregiverUserPoolDomain:
     Type: AWS::Cognito::UserPoolDomain
     Properties:
-      Domain: !Ref UserPoolDomainPrefix
+      Domain: !Sub "adaptsg-${AWS::AccountId}-${AWS::Region}"
       UserPoolId: !Ref CaregiverUserPool
 
   JourneyTable:
@@ -160,6 +232,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      TableName: !Sub "${AWS::StackName}-state-v2"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: pk
@@ -178,7 +251,7 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: expires_at
         Enabled: true
-      DeletionProtectionEnabled: true
+      DeletionProtectionEnabled: !If [DeletionProtectionEnabled, true, false]
       Tags:
         - Key: adaptsg-schema-version
           Value: "1"
@@ -252,22 +325,89 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  AdaptSgApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}-http-api"
+      RetentionInDays: 14
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
   AdaptSgHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: $default
+      FailOnWarnings: true
+      PropagateTags: true
+      Tags:
+        Application: AdaptSG
+        Environment: !Ref EnvironmentName
+      AccessLogSettings:
+        DestinationArn: !GetAtt AdaptSgApiAccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency"}
+      DefaultRouteSettings:
+        DetailedMetricsEnabled: true
+        ThrottlingBurstLimit: !Ref ApiThrottleBurstLimit
+        ThrottlingRateLimit: !Ref ApiThrottleRateLimit
       Auth:
         DefaultAuthorizer: CognitoJwtAuthorizer
         Authorizers:
           CognitoJwtAuthorizer:
+            IdentitySource: $request.header.Authorization
             JwtConfiguration:
               issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CaregiverUserPool}
               audience:
                 - !Ref CaregiverUserPoolClient
       CorsConfiguration:
-        AllowOrigins: [https://production.invalid]
+        AllowOrigins: [!Ref AllowedCorsOrigin]
         AllowHeaders: [authorization, content-type, idempotency-key]
-        AllowMethods: [GET, POST]
+        AllowMethods: [GET, POST, OPTIONS]
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-lambda"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
+      Policies:
+        - PolicyName: AdaptSgRuntimeAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: JourneyStateOnly
+                Effect: Allow
+                Action:
+                  - dynamodb:DeleteItem
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:TransactWriteItems
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt JourneyTable.Arn
+              - !If
+                - BedrockInferenceEnabled
+                - Sid: InvokeExplicitBedrockModels
+                  Effect: Allow
+                  Action: bedrock:InvokeModel
+                  Resource: !Ref BedrockModelArns
+                - !Ref AWS::NoValue
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   AdaptSgFunction:
     Type: AWS::Serverless::Function
@@ -279,22 +419,11 @@ Resources:
       CodeUri: ../..
       Handler: adaptsg.aws_handler.handler
       Description: AdaptSG caregiver-owned planning API.
+      Role: !GetAtt LambdaExecutionRole.Arn
       ReservedConcurrentExecutions: !If
         - HasLambdaReservedConcurrency
         - !Ref LambdaReservedConcurrency
         - !Ref AWS::NoValue
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref JourneyTable
-        - Statement:
-            - Sid: InvokeConfiguredBedrockModel
-              Effect: Allow
-              Action: bedrock:InvokeModel
-              Resource: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/*
-            - Sid: ReadConfiguredProviderSecrets
-              Effect: Allow
-              Action: ssm:GetParameter
-              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*
       Events:
         Health:
           Type: HttpApi
@@ -304,12 +433,159 @@ Resources:
             Method: GET
             Auth:
               Authorizer: NONE
-        Api:
+        CreateJourney:
           Type: HttpApi
           Properties:
             ApiId: !Ref AdaptSgHttpApi
-            Path: /{proxy+}
-            Method: ANY
+            Path: /api/journeys
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        LegacyPlan:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/plan
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        LegacyReplan:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/replan
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        ReadJourney:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.read]
+        ReplanJourney:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}/replan
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        DecideJourney:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}/decision
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        MonitorJourney:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}/monitor
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        CreateActionIntent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}/action-intents
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/journeys.write]
+        CreateConsent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/consents
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        ConsentStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/consents/journey-planning/status
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        ReadConsent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/consents/{consent_id}
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        RevokeConsent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/consents/{consent_id}/revoke
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        CreateAuthorityGrant:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/authority-grants
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        ReadAuthorityGrant:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/authority-grants/{subject}
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        RevokeAuthorityGrant:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/authority-grants/{subject}/revoke
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/consents.manage]
+        ReadAuditEvents:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/v1/audit-events
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/audit.read]
+        ReadJourneyAuditEvents:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdaptSgHttpApi
+            Path: /api/journeys/{journey_id}/audit-events
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+              AuthorizationScopes: [adaptsg/audit.read]
       FunctionUrlConfig:
         AuthType: AWS_IAM
         InvokeMode: BUFFERED
@@ -389,8 +665,13 @@ Outputs:
     Value: !Sub https://${AdaptSgHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
   CognitoIssuer:
     Value: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CaregiverUserPool}
+  CognitoUserPoolId:
+    Value: !Ref CaregiverUserPool
   CognitoClientId:
     Value: !Ref CaregiverUserPoolClient
+  CognitoDomain:
+    Description: Cognito hosted authentication domain; clients must use authorization code with PKCE.
+    Value: !Sub "https://adaptsg-${AWS::AccountId}-${AWS::Region}.auth.${AWS::Region}.amazoncognito.com"
   JourneyTableName:
     Value: !Ref JourneyTable
   AdaptSgFunctionName:
