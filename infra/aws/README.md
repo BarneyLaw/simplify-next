@@ -17,8 +17,9 @@ The CloudFormation execution role can expand only the regional
 role's permission to create the application stack change set.
 
 There is no VPC, NAT gateway, provisioned concurrency, EC2, RDS, booking, or payment resource.
-Lambda reserved concurrency is five. DynamoDB uses on-demand billing. Temporary S3 objects and
-old SAM artifacts expire automatically.
+Lambda reserved concurrency defaults to five, but CI sets `LambdaReservedConcurrency=-1` because
+the workshop account cannot reserve capacity while retaining AWS's mandatory unreserved pool.
+DynamoDB uses on-demand billing. Temporary S3 objects and old SAM artifacts expire automatically.
 
 ## 1. Install and authenticate
 
@@ -143,7 +144,8 @@ sam deploy `
     ApplicationMode=demo `
     AllowedCorsOrigin=https://your-ui.example `
     BedrockModelArns=DISABLED `
-    EnablePointInTimeRecovery=false
+    EnablePointInTimeRecovery=false `
+    LambdaReservedConcurrency=-1
 ```
 
 Do not put temporary AWS credentials or provider values in `--parameter-overrides`.
