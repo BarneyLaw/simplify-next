@@ -1316,29 +1316,44 @@ class AdaptSGService:
 def build_service(settings: Settings | None = None) -> AdaptSGService:
     resolved = settings or get_settings()
     live_requirements = (
-        resolved.adaptsg_authentication_mode == "cognito",
-        bool(resolved.adaptsg_cognito_issuer),
-        bool(resolved.adaptsg_cognito_audience),
-        resolved.adaptsg_authentication_configured,
-        resolved.adaptsg_encryption_configured,
-        resolved.adaptsg_audit_storage_configured,
-        resolved.adaptsg_production_retention_configured,
-        bool(resolved.adaptsg_audit_retention_days),
-        bool(resolved.adaptsg_revoked_consent_retention_days),
-        bool(resolved.adaptsg_consent_policy_version),
-        resolved.adaptsg_live_catalog_configured,
-        bool(resolved.adaptsg_catalog_version),
-        bool(resolved.adaptsg_cost_model_version),
-        resolved.adaptsg_input_token_tariff_sgd is not None,
-        resolved.adaptsg_output_token_tariff_sgd is not None,
-        resolved.adaptsg_journeys_table,
-        resolved.onemap_api_token,
-        resolved.lta_account_key,
+        ("ADAPTSG_AUTHENTICATION_MODE", resolved.adaptsg_authentication_mode == "cognito"),
+        ("ADAPTSG_COGNITO_ISSUER", bool(resolved.adaptsg_cognito_issuer)),
+        ("ADAPTSG_COGNITO_AUDIENCE", bool(resolved.adaptsg_cognito_audience)),
+        ("ADAPTSG_AUTHENTICATION_CONFIGURED", resolved.adaptsg_authentication_configured),
+        ("ADAPTSG_ENCRYPTION_CONFIGURED", resolved.adaptsg_encryption_configured),
+        ("ADAPTSG_AUDIT_STORAGE_CONFIGURED", resolved.adaptsg_audit_storage_configured),
+        (
+            "ADAPTSG_PRODUCTION_RETENTION_CONFIGURED",
+            resolved.adaptsg_production_retention_configured,
+        ),
+        ("ADAPTSG_AUDIT_RETENTION_DAYS", bool(resolved.adaptsg_audit_retention_days)),
+        (
+            "ADAPTSG_REVOKED_CONSENT_RETENTION_DAYS",
+            bool(resolved.adaptsg_revoked_consent_retention_days),
+        ),
+        ("ADAPTSG_CONSENT_POLICY_VERSION", bool(resolved.adaptsg_consent_policy_version)),
+        ("ADAPTSG_LIVE_CATALOG_CONFIGURED", resolved.adaptsg_live_catalog_configured),
+        ("ADAPTSG_CATALOG_VERSION", bool(resolved.adaptsg_catalog_version)),
+        ("ADAPTSG_COST_MODEL_VERSION", bool(resolved.adaptsg_cost_model_version)),
+        (
+            "ADAPTSG_INPUT_TOKEN_TARIFF_SGD",
+            resolved.adaptsg_input_token_tariff_sgd is not None,
+        ),
+        (
+            "ADAPTSG_OUTPUT_TOKEN_TARIFF_SGD",
+            resolved.adaptsg_output_token_tariff_sgd is not None,
+        ),
+        ("ADAPTSG_JOURNEYS_TABLE", bool(resolved.adaptsg_journeys_table)),
+        ("ONEMAP_API_TOKEN", bool(resolved.onemap_api_token)),
+        ("LTA_ACCOUNT_KEY", bool(resolved.lta_account_key)),
     )
-    if resolved.adaptsg_mode == "live" and not all(live_requirements):
+    missing_live_requirements = tuple(
+        name for name, configured in live_requirements if not configured
+    )
+    if resolved.adaptsg_mode == "live" and missing_live_requirements:
         raise RetentionConfigurationMissing(
-            "live mode requires Cognito, durable encrypted storage, concrete retention, "
-            "current consent/catalog/cost policy, and live provider configuration"
+            "live mode requires production policy and provider configuration; missing: "
+            + ", ".join(missing_live_requirements)
         )
     enabled_flags = frozenset(
         flag

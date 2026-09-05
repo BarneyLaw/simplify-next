@@ -75,7 +75,7 @@ from adaptsg.web_api import create_app
 
 
 def test_live_mode_fails_closed_without_production_trust_configuration() -> None:
-    with pytest.raises(Exception, match="retention"):
+    with pytest.raises(Exception, match="ADAPTSG_AUTHENTICATION_MODE"):
         build_service(Settings(adaptsg_mode="live"))
 
 
