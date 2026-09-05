@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     )
 
     adaptsg_mode: Literal["demo", "live"] = "live"
+    adaptsg_local_live_enabled: bool = False
     adaptsg_log_level: str = "INFO"
     aws_region: str = "us-east-1"
     aws_profile: str | None = None

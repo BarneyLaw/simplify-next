@@ -218,7 +218,7 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
     @app.post("/api/journeys", response_model=JourneyState)
     @app.post("/api/plan", response_model=JourneyState)
     def plan(payload: PlanApiRequest, request: Request) -> JourneyState:
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         return resolved_service.start_journey(
             payload.prompt,
             journey_date=payload.journey_date,
@@ -228,7 +228,7 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
 
     @app.post("/api/replan", response_model=JourneyState)
     def replan(payload: ReplanApiRequest, request: Request) -> JourneyState:
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         return resolved_service.propose_replan(
             payload.journey_id,
             payload.trigger,
@@ -243,7 +243,7 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
         payload: JourneyReplanApiRequest,
         request: Request,
     ) -> JourneyState:
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         return resolved_service.propose_replan(
             journey_id,
             payload.trigger,
@@ -260,27 +260,27 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
             target_id=payload.target_id,
             expected_version=payload.expected_version,
             idempotency_key=_idempotency_key(request),
-            principal=_principal(request, mode=resolved_service.mode),
+            principal=_principal(request, mode=resolved_service.auth_mode),
             intent_id=payload.intent_id,
         )
 
     @app.get("/api/journeys/{journey_id}", response_model=JourneyState)
     def get_journey(journey_id: UUID, request: Request) -> JourneyState:
         return resolved_service.get_journey(
-            journey_id, principal=_principal(request, mode=resolved_service.mode)
+            journey_id, principal=_principal(request, mode=resolved_service.auth_mode)
         )
 
     @app.post("/api/journeys/{journey_id}/monitor", response_model=MonitoringOutcome)
     def monitor_journey(journey_id: UUID, request: Request) -> MonitoringOutcome:
         return resolved_service.monitor_journey(
-            journey_id, principal=_principal(request, mode=resolved_service.mode)
+            journey_id, principal=_principal(request, mode=resolved_service.auth_mode)
         )
 
     @app.post("/api/journeys/{journey_id}/action-intents", response_model=ActionIntent)
     def issue_action_intent(
         journey_id: UUID, payload: ActionIntentApiRequest, request: Request
     ) -> ActionIntent:
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         decision = ApprovalDecision(payload.decision)
         return resolved_service.issue_action_intent(
             journey_id,
@@ -292,10 +292,11 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
 
     @app.post("/api/v1/consents", response_model=ConsentRecord)
     def create_consent(payload: ConsentCreateApiRequest, request: Request) -> ConsentRecord:
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         if (
             payload.policy_version != resolved_service.consent_policy_version
             and resolved_service.mode == "live"
+            and not resolved_service.local_live
         ):
             raise ConsentRequired("client policy version is not current")
         return resolved_service.consent.create(
@@ -312,7 +313,7 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
 
     @app.get("/api/v1/consents/journey-planning/status", response_model=ConsentStatusResponse)
     def consent_status(request: Request) -> ConsentStatusResponse:
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         record = resolved_service.consent.find_current(
             subject=principal.principal_id,
             purpose=ConsentPurpose.JOURNEY_PLANNING,
@@ -332,7 +333,7 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
     @app.get("/api/v1/consents/{consent_id}", response_model=ConsentRecord)
     def read_consent(consent_id: UUID, request: Request) -> ConsentRecord:
         record = resolved_service.consent.get(consent_id)
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         if record.subject != principal.principal_id:
             resolved_service.authorization.require(
                 principal, Capability.JOURNEY_READ, subject=record.subject
@@ -344,7 +345,7 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
         consent_id: UUID, payload: ConsentRevokeApiRequest, request: Request
     ) -> ConsentRecord:
         record = resolved_service.consent.get(consent_id)
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         if record.subject != principal.principal_id:
             raise AuthorizationDenied("only the consent subject may revoke consent")
         return resolved_service.consent.revoke(
@@ -353,9 +354,9 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
 
     @app.post("/api/v1/authority-grants", response_model=AuthorityGrant, include_in_schema=False)
     def create_authority(payload: AuthorityCreateApiRequest, request: Request) -> AuthorityGrant:
-        if resolved_service.mode == "live":
+        if resolved_service.mode == "live" and not resolved_service.local_live:
             raise AuthorizationDenied("authority grants are disabled in production")
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         if ActorRole.CAREGIVER not in principal.roles:
             raise AuthorizationDenied("caregiver role is required to issue a grant")
         return resolved_service.authority.put(
@@ -372,14 +373,14 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
 
     @app.get("/api/v1/authority-grants/{subject}", response_model=AuthorityGrant)
     def read_authority(subject: str, request: Request) -> AuthorityGrant:
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         return resolved_service.authority.get(subject, principal.principal_id)
 
     @app.post("/api/v1/authority-grants/{subject}/revoke", response_model=AuthorityGrant)
     def revoke_authority(
         subject: str, payload: AuthorityRevokeApiRequest, request: Request
     ) -> AuthorityGrant:
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         if ActorRole.CAREGIVER not in principal.roles:
             raise AuthorizationDenied("caregiver role is required to revoke a grant")
         return resolved_service.authority.revoke(
@@ -388,7 +389,7 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
 
     @app.get("/api/v1/audit-events", response_model=tuple[AuditEvent, ...])
     def audit_events(request: Request) -> tuple[AuditEvent, ...]:
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         if not principal.authenticated or not principal.roles:
             raise AuthorizationDenied("authenticated principal is required")
         return resolved_service.audit.list(correlation_id=None)

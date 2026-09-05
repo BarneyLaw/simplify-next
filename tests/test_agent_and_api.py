@@ -79,6 +79,20 @@ def test_live_mode_fails_closed_without_production_trust_configuration() -> None
         build_service(Settings(adaptsg_mode="live"))
 
 
+def test_local_live_mode_uses_live_providers_with_demo_auth() -> None:
+    service = build_service(
+        Settings(
+            adaptsg_mode="live",
+            adaptsg_local_live_enabled=True,
+            onemap_api_token="test-onemap-token",
+            lta_account_key="test-lta-key",
+        )
+    )
+    assert service.mode == "live"
+    assert service.auth_mode == "demo"
+    assert service.local_live
+
+
 def test_phase_two_models_reject_unknown_fields_and_prohibited_risk_is_typed() -> None:
     with pytest.raises(ValidationError):
         PrincipalContext.model_validate(

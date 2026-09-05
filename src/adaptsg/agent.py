@@ -661,6 +661,7 @@ class AdaptSGService:
         store: JourneyStore | None = None,
         ttl_hours: int = 24,
         mode: str = "demo",
+        local_live: bool = False,
         clock: Clock | None = None,
         policy: CapabilityResolver | None = None,
         audit: AuditStore | None = None,
@@ -676,6 +677,7 @@ class AdaptSGService:
         self.store = store or InMemoryJourneyStore(clock=self._clock)
         self.ttl = timedelta(hours=ttl_hours)
         self.mode = mode
+        self.local_live = local_live
         self.policy = policy or CapabilityResolver()
         self.audit = audit or InMemoryAuditStore()
         self.consent_policy_version = consent_policy_version
@@ -692,6 +694,10 @@ class AdaptSGService:
     @property
     def storage_mode(self) -> str:
         return self.store.storage_mode
+
+    @property
+    def auth_mode(self) -> str:
+        return "demo" if self.local_live else self.mode
 
     def _build_plan_graph(self) -> object:
         graph = StateGraph(PlanGraphState)
@@ -863,7 +869,7 @@ class AdaptSGService:
         self._require_actor(actor, Capability.JOURNEY_WRITE)
         current_for_auth = self.get_journey(journey_id, principal=actor)
         self._require_processing_consent(actor, current_for_auth)
-        if self.mode == "live" and intent_id is None:
+        if self.mode == "live" and not self.local_live and intent_id is None:
             raise IntentConflict("a prepared action intent is required")
         fingerprint = self._fingerprint(
             {
@@ -1119,7 +1125,7 @@ class AdaptSGService:
     def _require_processing_consent(
         self, principal: PrincipalContext, state: JourneyState | None = None
     ) -> ConsentRecord | None:
-        if self.mode != "live":
+        if self.mode != "live" or self.local_live:
             return None
         record = self.consent.find_current(
             subject=principal.principal_id,
@@ -1350,7 +1356,11 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
     missing_live_requirements = tuple(
         name for name, configured in live_requirements if not configured
     )
-    if resolved.adaptsg_mode == "live" and missing_live_requirements:
+    if (
+        resolved.adaptsg_mode == "live"
+        and not resolved.adaptsg_local_live_enabled
+        and missing_live_requirements
+    ):
         raise RetentionConfigurationMissing(
             "live mode requires production policy and provider configuration; missing: "
             + ", ".join(missing_live_requirements)
@@ -1428,6 +1438,7 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
         store=store,
         ttl_hours=resolved.adaptsg_journey_ttl_hours,
         mode=resolved.adaptsg_mode,
+        local_live=resolved.adaptsg_local_live_enabled,
         policy=policy,
         consent_policy_version=resolved.adaptsg_consent_policy_version or None,
         consent_categories=frozenset(
