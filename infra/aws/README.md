@@ -109,7 +109,7 @@ shape:
 {
   "ONEMAP_API_TOKEN": "replace in Secrets Manager",
   "LTA_ACCOUNT_KEY": "replace in Secrets Manager",
-  "DATA_GOV_SG_API_KEY": "optional; omit until supplied"
+  "DATA_GOV_SG_API_KEY": ""
 }
 ```
 
