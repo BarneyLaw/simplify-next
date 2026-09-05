@@ -4,7 +4,7 @@ Last updated: 2026-09-05 (Asia/Singapore)
 
 ## Current status
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The first AWS Lambda/DynamoDB/S3 stack and zero-token smoke path are deployed. The authenticated AWS v2 slice is being reconciled with the merged Cognito/ownership foundation. Live provider mode remains pending credentials, provider approvals, and an independent Bedrock-disable contract switch.
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The first AWS Lambda/DynamoDB/S3 stack and zero-token smoke path are deployed. The authenticated AWS v2 code is merged; its first update rolled back because the CloudFormation role lacked API Gateway tagging permissions. The bootstrap role is corrected and rollback is complete, with the empty orphaned v2 table removed. Redeployment of the rollback-safe template remains pending. Live provider mode remains pending credentials, provider approvals, and an independent Bedrock-disable contract switch.
 
 ## Completed milestones
 
@@ -47,6 +47,7 @@ SAM CLI and Python 3.12 are not installed in this workspace, so those checks rem
 | Tests | 71 passed | `python -m pytest` |
 | Tests (trust scaffold) | 163 passed | `.venv/bin/python -m pytest -q` under Python 3.13.7 |
 | Tests (AWS platform branch baseline) | 158 passed | `./scripts/check.ps1` on `feature/r4-aws-platform` |
+| Tests (AWS recovery hardening) | 174 passed | Python 3.12.3 full gate; 90.33% branch coverage |
 | Named scenarios | 20 passed | `tests/test_evaluation_scenarios.py` |
 | Branch coverage | 92.87% | CI threshold is 90% |
 | Ruff format/lint | Passed | `scripts/check.ps1` |
@@ -60,6 +61,7 @@ SAM CLI and Python 3.12 are not installed in this workspace, so those checks rem
 | Docker image build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
 | SAM validate/build | Passed in CI | GitHub Actions on feature PR commit `774fd5a` |
 | AWS CloudFormation schemas | Passed locally | `cfn-lint` 1.56.0 on application and OIDC bootstrap templates |
+| AWS rollback recovery | Passed | Bootstrap role updated; stack restored to `UPDATE_ROLLBACK_COMPLETE`; empty orphaned `adaptsg-demo-state-v2` removed; original table retained |
 | AWS Lambda/DynamoDB deployment smoke | Passed | `adaptsg-demo` reached `CREATE_COMPLETE`; main commit `d38ae48` produced DynamoDB journey and private S3 evidence with zero Bedrock tokens |
 | Vercel platform build | Pending deployment | Vercel CLI/account unavailable locally |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
@@ -98,6 +100,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r3-redesigned-browser-client` | Rewrote `public/index.html` to the AdaptSG design-canvas redesign, frontend only | `scripts/check_web.mjs` and `tests/test_ui_browser_client.py`/`test_ui_demo_copy.py` pass; awaiting manual QA and merge |
 | `feature/r4-aws-platform` | DynamoDB/S3/IAM/observability stack and OIDC Lambda CI/CD | Full local gate passed; AWS deployment and review pending |
 | `feature/r4-authenticated-aws-demo` | Reconcile Cognito/API Gateway and owner-scoped v2 state with token-free AWS deployment | In progress; provider credentials intentionally absent |
+| `feature/r4-aws-recovery-hardening` | API Gateway deployment permission, rollback-safe DynamoDB protection and local CloudFormation lint | In progress; locally verified and bootstrap applied |
 
 ## External setup still required
 
@@ -110,7 +113,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
 8. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
 9. Deploy the Vercel demo and inspect it in a connected browser at desktop and mobile widths.
-10. Deploy the authenticated AWS v2 stack, create one invite-only Cognito demo user, and retain the API Gateway authorization evidence.
+10. Merge and deploy the rollback-safe authenticated AWS v2 stack, create one invite-only Cognito demo user, and retain the API Gateway authorization evidence.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
 
