@@ -76,12 +76,19 @@ def test_lambda_metrics_measure_retention_monitoring_and_loop_caps() -> None:
 def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     template = (REPOSITORY_ROOT / "infra" / "aws" / "template.yaml").read_text(encoding="utf-8")
     assert "Default: DISABLED" in template
+    assert "ADAPTSG_MODE: !Ref ApplicationMode" in template
+    assert 'ADAPTSG_BEDROCK_ENABLED: !If [BedrockInferenceEnabled, "true", "false"]' in template
+    assert "foundation-model/*" not in template
+    assert "Resource: !Ref BedrockModelArns" in template
     assert "AuthType: AWS_IAM" in template
     assert "AuthType: NONE" not in template
     assert 'AllowOrigins: ["*"]' not in template
     assert "Type: AWS::DynamoDB::Table" in template
+    assert 'TableName: !Sub "${AWS::StackName}-state-v2"' in template
     assert "BillingMode: PAY_PER_REQUEST" in template
     assert "AttributeName: expires_at" in template
+    assert "EnableDeletionProtection:" in template
+    assert "DeletionProtectionEnabled: !If" in template
     assert "Type: AWS::S3::Bucket" in template
     assert "BlockPublicPolicy: true" in template
     assert "LambdaReservedConcurrency:" in template
@@ -89,6 +96,32 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert "HasLambdaReservedConcurrency" in template
     assert "ReservedConcurrentExecutions: !If" in template
     assert "Type: AWS::CloudWatch::Dashboard" in template
+    assert "Type: AWS::Cognito::UserPool" in template
+    assert "AllowAdminCreateUserOnly: true" in template
+    assert "EnabledMfas:" in template
+    assert "SOFTWARE_TOKEN_MFA" in template
+    assert "SoftwareTokenMfaConfiguration" not in template
+    assert "GenerateSecret: false" in template
+    assert "CallbackURLs: [!Ref CognitoCallbackUrl]" in template
+    assert "LogoutURLs: [!Ref CognitoLogoutUrl]" in template
+    assert "Type: AWS::Serverless::HttpApi" in template
+    assert "DefaultAuthorizer: CognitoJwtAuthorizer" in template
+    assert "IdentitySource: $request.header.Authorization" in template
+    assert "Path: /{proxy+}" not in template
+    assert "AuthorizationScopes: [adaptsg/journeys.read]" in template
+    assert "AuthorizationScopes: [adaptsg/journeys.write]" in template
+    assert "AuthorizationScopes: [adaptsg/consents.manage]" in template
+    assert "AuthorizationScopes: [adaptsg/audit.read]" in template
+    assert "AllowOrigins: [!Ref AllowedCorsOrigin]" in template
+    assert "AccessLogSettings:" in template
+    assert "DetailedMetricsEnabled: true" in template
+    assert "ThrottlingBurstLimit: !Ref ApiThrottleBurstLimit" in template
+    assert "ThrottlingRateLimit: !Ref ApiThrottleRateLimit" in template
+    access_log = template.split("AccessLogSettings:", 1)[1].split("DefaultRouteSettings:", 1)[0]
+    assert "prompt" not in access_log
+    assert "production.invalid" not in template
+    assert "SecretString:ONEMAP_API_TOKEN" in template
+    assert "SecretString:LTA_ACCOUNT_KEY" in template
 
 
 def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
@@ -98,6 +131,11 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert "aws-actions/configure-aws-credentials@v6" in workflow
     assert '"BedrockModelArns=DISABLED"' in workflow
     assert '"LambdaReservedConcurrency=-1"' in workflow
+    assert '"EnableDeletionProtection=false"' in workflow
+    assert '"CognitoCallbackUrl=${ADAPTSG_COGNITO_CALLBACK_URL}"' in workflow
+    assert '"CognitoLogoutUrl=${ADAPTSG_COGNITO_LOGOUT_URL}"' in workflow
+    assert "Verify public health and protected user routes" in workflow
+    assert '[[ "${protected_status}" == "401" ]]' in workflow
     assert "AWS_ACCESS_KEY_ID" not in workflow
     assert "sts:AssumeRoleWithWebIdentity" in bootstrap
     assert "token.actions.githubusercontent.com:aud: sts.amazonaws.com" in bootstrap
@@ -108,3 +146,7 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     )[0]
     assert "cloudformation:CreateChangeSet" in execution_role
     assert "aws:transform/Serverless-2016-10-31" in execution_role
+    assert "cognito-idp:CreateUserPool" in execution_role
+    assert "apigateway:TagResource" in execution_role
+    assert "apigateway:UntagResource" in execution_role
+    assert "apigateway:POST" in execution_role
