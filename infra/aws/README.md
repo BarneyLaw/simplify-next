@@ -88,6 +88,7 @@ Copy the bootstrap stack outputs into GitHub Actions environment variables:
 | `AWS_CLOUDFORMATION_ROLE_ARN` | `CloudFormationExecutionRoleArn` |
 | `AWS_SAM_ARTIFACT_BUCKET` | `SamArtifactBucketName` |
 | `ADAPTSG_STACK_NAME` | `adaptsg-demo` |
+| `ADAPTSG_APPLICATION_MODE` | `demo` until every live provider has been verified; then `live` |
 | `ADAPTSG_ALLOWED_CORS_ORIGIN` | exact trusted UI origin, never `*` |
 | `ADAPTSG_COGNITO_CALLBACK_URL` | exact OAuth callback URL; may include a callback path |
 | `ADAPTSG_COGNITO_LOGOUT_URL` | exact browser destination after logout |
@@ -130,10 +131,10 @@ the secret during deployment; redeploy after rotating it.
 
 Set the GitHub `aws-demo` environment variable
 `ADAPTSG_PROVIDER_SECRET_NAME=adaptsg/demo/providers` only after all JSON keys referenced by the
-stack exist. The automated demo remains in `ADAPTSG_MODE=demo`, so these values are connected but
-not called. To call OneMap/LTA/data.gov.sg independently of Bedrock, deploy
-`ApplicationMode=live` only after the live-provider allowlist, timestamps, and sources have been
-verified; `BedrockModelArns` can remain `DISABLED`.
+stack exist. Keep `ADAPTSG_APPLICATION_MODE=demo` while connecting or rotating those values so they
+are not called. Set it to `live` only after OneMap search/routing and LTA/data.gov.sg responses have
+been verified with typed, timestamped, non-fixture provenance; `ADAPTSG_BEDROCK_MODEL_ARNS` remains
+an independent switch. CI rejects live mode when the provider secret name is empty.
 
 ## 4. Deploy
 

@@ -171,10 +171,13 @@ def verify_deployment(
     *,
     stack_name: str,
     region: str,
+    expected_application_mode: str = "demo",
     expected_bedrock_model_arns: str = "DISABLED",
 ) -> tuple[VerificationCheck, ...]:
-    """Return all security and service-wiring checks for a deployed demo stack."""
+    """Return all security and service-wiring checks for a deployed stack."""
 
+    if expected_application_mode not in {"demo", "live"}:
+        raise DeploymentVerificationError("expected application mode must be demo or live")
     if not expected_bedrock_model_arns:
         raise DeploymentVerificationError("expected Bedrock model ARNs cannot be empty")
     if expected_bedrock_model_arns != "DISABLED":
@@ -214,8 +217,8 @@ def verify_deployment(
     )
     _record(
         checks,
-        "application providers remain deterministic",
-        parameters.get("ApplicationMode") == "demo",
+        "application mode matches the protected environment",
+        parameters.get("ApplicationMode") == expected_application_mode,
         str(parameters.get("ApplicationMode")),
     )
     _record(
@@ -415,11 +418,12 @@ def verify_deployment(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Verify the deployed deterministic-provider AdaptSG AWS demo."
+        description="Verify the deployed AdaptSG AWS application boundary."
     )
     parser.add_argument("--stack-name", default="adaptsg-demo")
     parser.add_argument("--region", default="ap-southeast-1")
     parser.add_argument("--profile")
+    parser.add_argument("--expected-application-mode", choices=("demo", "live"), default="demo")
     parser.add_argument("--expected-bedrock-model-arns", default="DISABLED")
     return parser
 
@@ -432,6 +436,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             reader,
             stack_name=args.stack_name,
             region=args.region,
+            expected_application_mode=args.expected_application_mode,
             expected_bedrock_model_arns=args.expected_bedrock_model_arns,
         )
     except DeploymentVerificationError as exc:
