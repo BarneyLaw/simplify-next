@@ -105,12 +105,13 @@ Copy `.env.example` to `.env`. `.env` is ignored by Git.
 | `ADAPTSG_MODE` | `demo` in `.env.example` | Application policy/readiness mode; it does not select providers or Bedrock |
 | `ADAPTSG_PROVIDER_MODE` | `demo` | `demo` for deterministic routing/environment adapters; `live` for official APIs |
 | `ADAPTSG_BEDROCK_ENABLED` | `false` | Independently select Bedrock preference extraction; AWS derives this from its ARN allowlist |
-| `AWS_REGION` | `us-east-1` | Bedrock region used by this hackathon account |
+| `AWS_REGION` | `us-east-1` | Default AWS SDK region for local execution; the deployed application stack remains in Singapore |
 | `AWS_PROFILE` | empty | Preferred local AWS CLI/SSO profile |
 | `AWS_ACCESS_KEY_ID` | empty | Temporary credential when a profile is unavailable |
 | `AWS_SECRET_ACCESS_KEY` | empty | Temporary credential; never commit it |
 | `AWS_SESSION_TOKEN` | empty | Required with hackathon temporary credentials |
-| `BEDROCK_MODEL_ID` | Claude Haiku 4.5 global profile | Configured Bedrock Converse model |
+| `BEDROCK_REGION` | `us-east-1` | Bedrock runtime endpoint, independent of the application stack region |
+| `BEDROCK_MODEL_ID` | Claude Haiku 4.5 US profile | Configured Bedrock Converse model |
 | `BEDROCK_MAX_TOKENS` | `1200` locally | Maximum model output per extraction; AWS CI deploys a `256`-token cap by default |
 | `ONEMAP_API_TOKEN` | empty | Required for live OneMap routing |
 | `ONEMAP_BFA_ENABLED` | `false` | Enable BFA walking routes only after SLA approval |
@@ -137,9 +138,10 @@ the deterministic planner and `ItineraryValidator`.
 
 If Bedrock extraction fails, the local app uses a conservative fallback and displays a warning. Routing or environment failures do not become live claims: the current plan is retained and live verification is reported as failed.
 
-The deployed workshop stack uses `ap-southeast-1`. Keep all regional resources and GitHub variables
-on that region. Bedrock remains disabled until `ADAPTSG_BEDROCK_MODEL_ARNS` contains the exact
-inference-profile and foundation-model ARNs; the literal word `ENABLED` is not valid.
+The deployed workshop stack stays in `ap-southeast-1`, while the trainer-approved Bedrock runtime
+uses `BEDROCK_REGION=us-east-1` with a `us.` inference profile. Bedrock remains disabled until
+`ADAPTSG_BEDROCK_MODEL_ARNS` contains the exact inference-profile and destination foundation-model
+ARNs; the literal word `ENABLED` is not valid.
 The protected AWS workflow separately reads `ADAPTSG_APPLICATION_MODE`, defaulting to `demo`; set
 it to `live` only with a populated `ADAPTSG_PROVIDER_SECRET_NAME`. The deployment gate rejects any
 other value and refuses a live deployment without that secret reference.

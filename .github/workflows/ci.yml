@@ -119,7 +119,8 @@ jobs:
       ADAPTSG_COGNITO_LOGOUT_URL: ${{ vars.ADAPTSG_COGNITO_LOGOUT_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8000' }}
       ADAPTSG_PROVIDER_SECRET_NAME: ${{ vars.ADAPTSG_PROVIDER_SECRET_NAME }}
       ADAPTSG_ALARM_NOTIFICATION_EMAIL: ${{ vars.ADAPTSG_ALARM_NOTIFICATION_EMAIL }}
-      ADAPTSG_BEDROCK_MODEL_ID: ${{ vars.ADAPTSG_BEDROCK_MODEL_ID || 'global.anthropic.claude-haiku-4-5-20251001-v1:0' }}
+      ADAPTSG_BEDROCK_REGION: ${{ vars.ADAPTSG_BEDROCK_REGION || 'us-east-1' }}
+      ADAPTSG_BEDROCK_MODEL_ID: ${{ vars.ADAPTSG_BEDROCK_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0' }}
       ADAPTSG_BEDROCK_MODEL_ARNS: ${{ vars.ADAPTSG_BEDROCK_MODEL_ARNS || 'DISABLED' }}
       ADAPTSG_BEDROCK_MAX_TOKENS: ${{ vars.ADAPTSG_BEDROCK_MAX_TOKENS || '256' }}
     steps:
@@ -149,6 +150,7 @@ jobs:
             : "${ADAPTSG_PROVIDER_SECRET_NAME:?Live mode requires ADAPTSG_PROVIDER_SECRET_NAME}"
           fi
           if [[ "${ADAPTSG_BEDROCK_MODEL_ARNS}" != "DISABLED" ]]; then
+            : "${ADAPTSG_BEDROCK_REGION:?Set ADAPTSG_BEDROCK_REGION}"
             : "${ADAPTSG_BEDROCK_MODEL_ID:?Set ADAPTSG_BEDROCK_MODEL_ID}"
             IFS=',' read -ra bedrock_model_arns <<< "${ADAPTSG_BEDROCK_MODEL_ARNS}"
             for model_arn in "${bedrock_model_arns[@]}"; do
@@ -183,6 +185,7 @@ jobs:
               "CognitoCallbackUrl=${callback_url}"
               "CognitoLogoutUrl=${logout_url}"
               "EnableSelfSignUp=true"
+              "BedrockRegion=${ADAPTSG_BEDROCK_REGION}"
               "BedrockModelId=${ADAPTSG_BEDROCK_MODEL_ID}"
               "BedrockModelArns=${ADAPTSG_BEDROCK_MODEL_ARNS}"
               "BedrockMaxTokens=${ADAPTSG_BEDROCK_MAX_TOKENS}"
@@ -467,6 +470,7 @@ jobs:
           --stack-name "${ADAPTSG_STACK_NAME}"
           --region "${AWS_REGION}"
           --expected-application-mode "${ADAPTSG_APPLICATION_MODE}"
+          --expected-bedrock-region "${ADAPTSG_BEDROCK_REGION}"
           --expected-bedrock-model-arns "${ADAPTSG_BEDROCK_MODEL_ARNS}"
       - name: Record deployed resources
         shell: bash
