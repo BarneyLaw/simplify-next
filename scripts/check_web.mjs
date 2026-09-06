@@ -25,6 +25,11 @@ const markup = html.replace(/<script>[\s\S]*?<\/script>/, "");
 const styles = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
 
 require(
+  markup.includes("starting from Toa Payoh MRT Station (NS19)."),
+  "the live sample must use the OneMap-verified unambiguous station label",
+);
+
+require(
   /<a[^>]+class="skip"[^>]*href="#/.test(markup),
   "a skip link must let keyboard users reach the planning form",
 );
