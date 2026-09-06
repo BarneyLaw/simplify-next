@@ -129,6 +129,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-deployment-posture` | Read-only live verification for token-free AWS security and service wiring | Merged; bootstrap update `UPDATE_COMPLETE`, live stack passed 22/22 checks, and branch run `34012492178` passed correctness, Docker and SAM |
 | `feature/static-browser-cognito` | Restored `public/index.html` and its serving path, added the Cognito PKCE auth layer plus `scripts/test_web_auth.mjs`, retired Streamlit | Merged in PR #29; main run `34013996057` deployed the static client successfully; independent browser-session QA remains pending |
 | `feature/r4-cost-alerting` | Scoped SNS delivery for Lambda error/throttle alarms plus post-deploy policy verification | Branch run `34015239875` passed correctness, Docker and SAM; bootstrap is `UPDATE_COMPLETE` with scoped SNS permissions; application deployment awaits merge |
+| `feature/r3-functional-aws-demo` | Remove stale Vercel browser metadata and reverify the complete static journey/auth flow | In progress; Role 3 client was already functionally complete on main |
 
 ## External setup still required
 
