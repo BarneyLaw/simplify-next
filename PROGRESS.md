@@ -308,6 +308,10 @@ with the provider, and the first is the `.env` issue above rather than a defect.
   problem and raises `origin_not_verified` (422, with candidates to choose from). Only a provider
   that could not answer raises `ToolUnavailable` (503) and fails closed under rule 10. Conflating
   the two had shown an outage message for an unrecognised place name.
+- **Provider credentials never travel in error text:** httpx carries the full request URL in its
+  exception message and OneMap authenticates by query parameter, so a provider failure published
+  the API token in the 503 body the browser renders. Credential parameters are redacted at the
+  three tool boundaries that interpolate an exception.
 - **Provenance moved, not removed:** the standing Live/Demo banner stated the runtime mode before
   there was a plan to qualify. Rule 11 is now carried by the evidence panel's `Runtime mode` row,
   where it sits beside the values it describes, and a static gate holds it to the resolved
