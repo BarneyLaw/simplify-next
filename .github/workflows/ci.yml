@@ -113,6 +113,7 @@ jobs:
       AWS_CLOUDFORMATION_ROLE_ARN: ${{ vars.AWS_CLOUDFORMATION_ROLE_ARN }}
       AWS_SAM_ARTIFACT_BUCKET: ${{ vars.AWS_SAM_ARTIFACT_BUCKET }}
       ADAPTSG_STACK_NAME: ${{ vars.ADAPTSG_STACK_NAME || 'adaptsg-demo' }}
+      ADAPTSG_APPLICATION_MODE: ${{ vars.ADAPTSG_APPLICATION_MODE || 'demo' }}
       ADAPTSG_ALLOWED_CORS_ORIGIN: ${{ vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8000' }}
       ADAPTSG_COGNITO_CALLBACK_URL: ${{ vars.ADAPTSG_COGNITO_CALLBACK_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8000' }}
       ADAPTSG_COGNITO_LOGOUT_URL: ${{ vars.ADAPTSG_COGNITO_LOGOUT_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8000' }}
@@ -140,6 +141,13 @@ jobs:
           : "${AWS_DEPLOY_ROLE_ARN:?Set AWS_DEPLOY_ROLE_ARN}"
           : "${AWS_CLOUDFORMATION_ROLE_ARN:?Set AWS_CLOUDFORMATION_ROLE_ARN}"
           : "${AWS_SAM_ARTIFACT_BUCKET:?Set AWS_SAM_ARTIFACT_BUCKET}"
+          case "${ADAPTSG_APPLICATION_MODE}" in
+            demo|live) ;;
+            *) echo "ADAPTSG_APPLICATION_MODE must be demo or live" >&2; exit 1 ;;
+          esac
+          if [[ "${ADAPTSG_APPLICATION_MODE}" == "live" ]]; then
+            : "${ADAPTSG_PROVIDER_SECRET_NAME:?Live mode requires ADAPTSG_PROVIDER_SECRET_NAME}"
+          fi
           if [[ "${ADAPTSG_BEDROCK_MODEL_ARNS}" != "DISABLED" ]]; then
             : "${ADAPTSG_BEDROCK_MODEL_ID:?Set ADAPTSG_BEDROCK_MODEL_ID}"
             IFS=',' read -ra bedrock_model_arns <<< "${ADAPTSG_BEDROCK_MODEL_ARNS}"
@@ -170,7 +178,7 @@ jobs:
             local logout_url="$3"
             local parameters=(
               "EnvironmentName=demo"
-              "ApplicationMode=demo"
+              "ApplicationMode=${ADAPTSG_APPLICATION_MODE}"
               "AllowedCorsOrigin=${allowed_origin}"
               "CognitoCallbackUrl=${callback_url}"
               "CognitoLogoutUrl=${logout_url}"
@@ -199,7 +207,7 @@ jobs:
               --no-confirm-changeset \
               --no-fail-on-empty-changeset \
               --parameter-overrides "${parameters[@]}" \
-              --tags Application=AdaptSG Environment=demo
+              --tags Application=AdaptSG Environment=demo Mode="${ADAPTSG_APPLICATION_MODE}"
           }
 
           # CloudFront assigns its hostname during the first deployment. The
@@ -316,10 +324,16 @@ jobs:
           [[ "${health_status}" == "200" ]]
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           health = json.loads(Path("health-response.json").read_text(encoding="utf-8"))
-          assert health == {"status": "ok", "mode": "demo", "storage": "dynamodb"}, health
+          expected = {
+              "status": "ok",
+              "mode": os.environ["ADAPTSG_APPLICATION_MODE"],
+              "storage": "dynamodb",
+          }
+          assert health == expected, health
           PY
           protected_status=$(curl --silent --show-error --output protected-response.json \
             --write-out '%{http_code}' \
@@ -430,6 +444,7 @@ jobs:
             --output web-health-response.json
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           config = json.loads(Path("deployed-runtime-config.json").read_text(encoding="utf-8"))
@@ -438,7 +453,11 @@ jobs:
           assert config["auth"]["pkceRequired"] is True, config
           assert config["auth"]["selfSignUpEnabled"] is True, config
           assert config["auth"]["signUpEndpoint"].endswith("/signup"), config
-          assert health == {"status": "ok", "mode": "demo", "storage": "dynamodb"}, health
+          assert health == {
+              "status": "ok",
+              "mode": os.environ["ADAPTSG_APPLICATION_MODE"],
+              "storage": "dynamodb",
+          }, health
           assert Path("web-index.html").stat().st_size > 0
           print("CloudFront web, runtime auth configuration, and same-origin API passed.")
           PY
@@ -447,6 +466,7 @@ jobs:
           python infra/aws/verify_deployment.py
           --stack-name "${ADAPTSG_STACK_NAME}"
           --region "${AWS_REGION}"
+          --expected-application-mode "${ADAPTSG_APPLICATION_MODE}"
           --expected-bedrock-model-arns "${ADAPTSG_BEDROCK_MODEL_ARNS}"
       - name: Record deployed resources
         shell: bash

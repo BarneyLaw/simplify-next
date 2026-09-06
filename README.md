@@ -140,6 +140,9 @@ If Bedrock extraction fails, the local app uses a conservative fallback and disp
 The deployed workshop stack uses `ap-southeast-1`. Keep all regional resources and GitHub variables
 on that region. Bedrock remains disabled until `ADAPTSG_BEDROCK_MODEL_ARNS` contains the exact
 inference-profile and foundation-model ARNs; the literal word `ENABLED` is not valid.
+The protected AWS workflow separately reads `ADAPTSG_APPLICATION_MODE`, defaulting to `demo`; set
+it to `live` only with a populated `ADAPTSG_PROVIDER_SECRET_NAME`. The deployment gate rejects any
+other value and refuses a live deployment without that secret reference.
 
 ## AWS serverless deployment
 

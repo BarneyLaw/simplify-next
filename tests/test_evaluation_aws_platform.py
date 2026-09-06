@@ -168,6 +168,9 @@ def test_aws_pipeline_uses_oidc_and_defaults_bedrock_off() -> None:
     assert "id-token: write" in workflow
     assert "aws-actions/configure-aws-credentials@v6" in workflow
     assert "vars.ADAPTSG_BEDROCK_MODEL_ID" in workflow
+    assert "vars.ADAPTSG_APPLICATION_MODE || 'demo'" in workflow
+    assert '"ApplicationMode=${ADAPTSG_APPLICATION_MODE}"' in workflow
+    assert "Live mode requires ADAPTSG_PROVIDER_SECRET_NAME" in workflow
     assert "vars.ADAPTSG_BEDROCK_MODEL_ARNS || 'DISABLED'" in workflow
     assert "vars.ADAPTSG_BEDROCK_MAX_TOKENS || '256'" in workflow
     assert '"BedrockModelArns=${ADAPTSG_BEDROCK_MODEL_ARNS}"' in workflow
@@ -496,6 +499,33 @@ def test_deployment_posture_verifier_accepts_expected_bedrock_connection() -> No
     )
 
     assert all(check.passed for check in checks)
+
+
+def test_deployment_posture_verifier_accepts_expected_live_mode() -> None:
+    responses = _deployed_posture_responses()
+    stack = responses[("cloudformation", "describe-stacks", "--stack-name", "adaptsg-demo")][
+        "Stacks"
+    ][0]
+    stack["Parameters"][0]["ParameterValue"] = "live"
+
+    checks = verify_deployment(
+        _FakeAwsReader(responses),
+        stack_name="adaptsg-demo",
+        region="ap-southeast-1",
+        expected_application_mode="live",
+    )
+
+    assert all(check.passed for check in checks)
+
+
+def test_deployment_posture_verifier_rejects_unknown_expected_mode() -> None:
+    with pytest.raises(DeploymentVerificationError, match="application mode"):
+        verify_deployment(
+            _FakeAwsReader(_deployed_posture_responses()),
+            stack_name="adaptsg-demo",
+            region="ap-southeast-1",
+            expected_application_mode="production",
+        )
 
 
 @pytest.mark.parametrize(
