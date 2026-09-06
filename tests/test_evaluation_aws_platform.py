@@ -140,6 +140,20 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert "Principal:\n              Service: cloudfront.amazonaws.com" in template
 
 
+def test_lambda_smoke_emulates_verified_gateway_claims_without_weakening_gateway_auth() -> None:
+    workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    smoke = workflow.split("- name: Smoke-test Lambda and DynamoDB without Bedrock", 1)[1]
+    smoke = smoke.split("- name: Verify public health and protected user routes", 1)[0]
+    assert '"authorizer": {' in smoke
+    assert '"jwt": {' in smoke
+    assert '"sub": "deployment-smoke-caregiver"' in smoke
+    assert '"client_id": os.environ["COGNITO_CLIENT_ID"]' in smoke
+    assert "COGNITO_USER_POOL_ID" in smoke
+
+    gateway_check = workflow.split("- name: Verify public health and protected user routes", 1)[1]
+    assert '[[ "${protected_status}" == "401" ]]' in gateway_check
+
+
 def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     bootstrap = (REPOSITORY_ROOT / "infra" / "aws" / "bootstrap.yaml").read_text(encoding="utf-8")

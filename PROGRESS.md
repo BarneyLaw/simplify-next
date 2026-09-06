@@ -4,7 +4,13 @@ Last updated: 2026-09-06 (Asia/Singapore)
 
 ## Current status
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. Main run `34013996057` deployed commit `193c7eb` successfully. Bedrock remains disabled. The Role 1 correction for the deployed fixed `demo-caregiver` identity is implemented and locally tested on `feature/r1-auth-provider-separation`; deployed acceptance remains pending merge and deployment.
+The first Cognito-aware `main` deployment correctly rejected the legacy direct-Lambda journey
+smoke with `401`: direct invocation bypassed API Gateway and therefore supplied no verified JWT
+claims. `feature/r4-authenticated-lambda-smoke` now emulates API Gateway's post-authorizer claim
+shape only for the internal Lambda/DynamoDB smoke while retaining the separate real API Gateway
+unsigned-request `401` assertion.
+
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. Bedrock remains disabled. The Role 1 identity/provider separation and Role 3 AWS browser metadata changes are merged on `main`; the application stack update completed, but post-deploy acceptance is pending the corrected Lambda smoke.
 
 The deployed demo passed all 22 read-only AWS posture checks on 2026-09-06. The bootstrap stack
 is updated so CI can repeat those checks after each deployment without access to application

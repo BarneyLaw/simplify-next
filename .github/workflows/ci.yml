@@ -208,6 +208,14 @@ jobs:
             --stack-name "${ADAPTSG_STACK_NAME}" \
             --query "Stacks[0].Outputs[?OutputKey=='AdaptSgFunctionName'].OutputValue" \
             --output text)
+          export COGNITO_USER_POOL_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${ADAPTSG_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='CognitoUserPoolId'].OutputValue" \
+            --output text)
+          export COGNITO_CLIENT_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${ADAPTSG_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='CognitoClientId'].OutputValue" \
+            --output text)
           python - <<'PY'
           import json
           import os
@@ -230,6 +238,21 @@ jobs:
                   "idempotency-key": os.environ["IDEMPOTENCY_KEY"],
               },
               "requestContext": {
+                  # Direct Lambda invocation bypasses API Gateway, so emulate the verified
+                  # post-authorizer claim shape. The real unsigned-gateway check below
+                  # independently proves that callers cannot supply these claims themselves.
+                  "authorizer": {
+                      "jwt": {
+                          "claims": {
+                              "sub": "deployment-smoke-caregiver",
+                              "iss": (
+                                  f"https://cognito-idp.{os.environ['AWS_REGION']}"
+                                  f".amazonaws.com/{os.environ['COGNITO_USER_POOL_ID']}"
+                              ),
+                              "client_id": os.environ["COGNITO_CLIENT_ID"],
+                          }
+                      }
+                  },
                   "domainName": "lambda",
                   "http": {
                       "method": "POST",
