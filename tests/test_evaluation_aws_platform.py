@@ -10,7 +10,11 @@ from typing import Any
 import pytest
 
 import adaptsg.aws_handler as aws_handler
-from infra.aws.verify_deployment import AwsReader, verify_deployment
+from infra.aws.verify_deployment import (
+    AwsReader,
+    DeploymentVerificationError,
+    verify_deployment,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -80,6 +84,8 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert "ADAPTSG_MODE: !Ref ApplicationMode" in template
     assert "ADAPTSG_PROVIDER_MODE: !Ref ApplicationMode" in template
     assert 'ADAPTSG_BEDROCK_ENABLED: !If [BedrockInferenceEnabled, "true", "false"]' in template
+    assert "BedrockMaxTokens:" in template
+    assert "BEDROCK_MAX_TOKENS: !Ref BedrockMaxTokens" in template
     assert "foundation-model/*" not in template
     assert "Resource: !Ref BedrockModelArns" in template
     assert "AuthType: AWS_IAM" in template
@@ -154,12 +160,19 @@ def test_lambda_smoke_emulates_verified_gateway_claims_without_weakening_gateway
     assert '[[ "${protected_status}" == "401" ]]' in gateway_check
 
 
-def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
+def test_aws_pipeline_uses_oidc_and_defaults_bedrock_off() -> None:
     workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     bootstrap = (REPOSITORY_ROOT / "infra" / "aws" / "bootstrap.yaml").read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in workflow
+    assert "github.event_name == 'push' || github.event_name == 'workflow_dispatch'" in workflow
     assert "id-token: write" in workflow
     assert "aws-actions/configure-aws-credentials@v6" in workflow
-    assert '"BedrockModelArns=DISABLED"' in workflow
+    assert "vars.ADAPTSG_BEDROCK_MODEL_ID" in workflow
+    assert "vars.ADAPTSG_BEDROCK_MODEL_ARNS || 'DISABLED'" in workflow
+    assert "vars.ADAPTSG_BEDROCK_MAX_TOKENS || '256'" in workflow
+    assert '"BedrockModelArns=${ADAPTSG_BEDROCK_MODEL_ARNS}"' in workflow
+    assert '"BedrockMaxTokens=${ADAPTSG_BEDROCK_MAX_TOKENS}"' in workflow
+    assert "if: env.ADAPTSG_BEDROCK_MODEL_ARNS == 'DISABLED'" in workflow
     assert '"LambdaReservedConcurrency=-1"' in workflow
     assert '"EnableDeletionProtection=false"' in workflow
     assert '"EnableSelfSignUp=true"' in workflow
@@ -427,7 +440,10 @@ def test_deployment_posture_verifier_accepts_private_token_free_stack() -> None:
 
     assert len(checks) == 23
     assert all(check.passed for check in checks)
-    assert any(check.name == "Bedrock stack output is disabled" for check in checks)
+    assert any(
+        check.name == "Bedrock stack output matches the expected connection state"
+        for check in checks
+    )
     assert any(
         check.name == "CloudFront uses signed access to the private web bucket" for check in checks
     )
@@ -452,9 +468,54 @@ def test_deployment_posture_verifier_reports_public_bucket_and_bedrock_drift() -
     failed_names = {check.name for check in checks if not check.passed}
 
     assert failed_names == {
-        "Bedrock stack output is disabled",
+        "Bedrock stack output matches the expected connection state",
         "web asset bucket bucket policy is private",
     }
+
+
+def test_deployment_posture_verifier_accepts_expected_bedrock_connection() -> None:
+    model_arns = ",".join(
+        (
+            "arn:aws:bedrock:ap-southeast-1:138851097788:inference-profile/model",
+            "arn:aws:bedrock:ap-southeast-1::foundation-model/model",
+            "arn:aws:bedrock:::foundation-model/model",
+        )
+    )
+    responses = _deployed_posture_responses()
+    stack = responses[("cloudformation", "describe-stacks", "--stack-name", "adaptsg-demo")][
+        "Stacks"
+    ][0]
+    stack["Parameters"][1]["ParameterValue"] = model_arns
+    stack["Outputs"][0]["OutputValue"] = "CONNECTED"
+
+    checks = verify_deployment(
+        _FakeAwsReader(responses),
+        stack_name="adaptsg-demo",
+        region="ap-southeast-1",
+        expected_bedrock_model_arns=model_arns,
+    )
+
+    assert all(check.passed for check in checks)
+
+
+@pytest.mark.parametrize(
+    "model_arns",
+    (
+        "",
+        "arn:aws:bedrock:*:foundation-model/model",
+        "arn:aws:bedrock:ap-southeast-1::foundation-model/model, invalid",
+    ),
+)
+def test_deployment_posture_verifier_rejects_unsafe_expected_bedrock_resources(
+    model_arns: str,
+) -> None:
+    with pytest.raises(DeploymentVerificationError, match="Bedrock"):
+        verify_deployment(
+            _FakeAwsReader(_deployed_posture_responses()),
+            stack_name="adaptsg-demo",
+            region="ap-southeast-1",
+            expected_bedrock_model_arns=model_arns,
+        )
 
 
 def test_deployment_posture_verifier_reports_unscoped_notification_topic() -> None:
