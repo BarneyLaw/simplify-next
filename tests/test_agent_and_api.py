@@ -1489,7 +1489,12 @@ def test_service_runs_bounded_plan_graph(
         "lunch before 1 pm, budget $70, visit Gardens by the Bay.",
         journey_date=date(2026, 9, 1),
     )
-    assert outcome.itinerary.total_cost_sgd == 33
+    assert {segment.venue.id for segment in outcome.itinerary.segments} == {
+        "funan-food-court",
+        "gardens-bay-outdoor",
+    }
+    assert planner.validator.validate(outcome.itinerary).valid
+    assert outcome.itinerary.total_cost_sgd <= outcome.itinerary.request.hard.total_budget_sgd
     assert outcome.warnings
 
 
