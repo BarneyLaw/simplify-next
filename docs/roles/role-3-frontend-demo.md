@@ -49,6 +49,47 @@ a safety regression, not a styling one:
    refresh is a fifth, distinct case: callers must route to the signed-out view, not render a
    generic transport alert or reactivate the view they were on.
 
+## Design system
+
+`docs/DESIGN.md` is the durable reference: an achromatic system where hierarchy comes from
+typographic weight, size and tone. Read its "Deviations" section before changing any colour or
+type value -- it records the three places where following the reference literally would break an
+AdaptSG requirement (safety chroma, the scaled-up type ramp, and achromatic provenance).
+
+Two rules in it are load-bearing and easy to undo by accident, so `scripts/check_web.mjs` enforces
+both:
+
+- **`--ash` (`#adadad`) is a borders-and-fills token.** At 2.2:1 on white it must never appear in
+  a `color:` declaration; text uses `--muted` (4.9:1) or `--disabled` (4.5:1).
+- **The weights need the variable axis.** The font is imported as `Inter:wght@400..700`. A list of
+  static instances would make the browser snap 440, 456 and 652 to 400 and 600 silently.
+
+## View switching
+
+`activateView()` toggles the `hidden` attribute and nothing else -- there is no `.hidden` class,
+and `check_web.mjs` forbids adding one, because the attribute is what reaches assistive tech.
+That makes the CSS half of the contract: the UA rule `[hidden]{display:none}` loses to any author
+rule setting `display`, and `.work`, `.band` and `.btn` all set one. `80ca854` replaced the
+stylesheet and dropped `[hidden]{display:none!important}`, and every view rendered stacked down
+one page until it was restored. The rule is now gated; do not remove it.
+
+The same cascade rule caught a second bug: a rule inside `@media` carries no extra specificity, so
+a base rule for the same selector placed *after* the block wins at every viewport. `check_web.mjs`
+now fails on that shape too.
+
+## The mascot
+
+`src/adaptsg/assets/mascot.png` is the 1536px master; `public/mascot-{128,512}.png` are derived
+and are what the page references. To regenerate: the art sits on an opaque black field with a
+baked-in neon glow, and a luma key alone cannot lift it, because the navy tail fin sits at alpha
+115-148 -- inside the glow's own range. The bright blue outline does enclose the whole drawing
+above alpha 200, so threshold that, flood the background inward from a corner with
+`ImageDraw.floodfill` (on a `.copy()` -- `Image.fromarray` returns a readonly image and the fill
+is silently discarded otherwise), and keep whatever the flood cannot reach. Interior pixels keep
+their **original** rgb: un-premultiplying the navy tail would recover it as bright blue, because
+its darkness is paint, not low coverage. Premultiply across the resize or LANCZOS leaves a dark
+fringe.
+
 ## Definition of done
 
 Done means the plan diff and approval choice are obvious, keyboard and contrast checks pass, the

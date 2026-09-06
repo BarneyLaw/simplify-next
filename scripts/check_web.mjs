@@ -124,6 +124,18 @@ for (const rule of displayRules.filter((r) => r.media)) {
   );
 }
 
+// --ash is #adadad: 2.2:1 on white. It is a border and fill token, and the easiest rule
+// in the system to undo by accident, because it reads as "a grey" at a glance. The lookbehind
+// on the property name matters: `color` also appears inside `border-color`/`background-color`.
+const ashText = [...styles.matchAll(/(?:^|[;{\s])color\s*:\s*([^;}]+)/g)]
+  .map(([, value]) => value.trim())
+  .filter((value) => /var\(--ash\)|#adadad/i.test(value));
+require(
+  ashText.length === 0,
+  `--ash carries text in ${ashText.join(", ")}; at 2.2:1 it is a borders-and-fills token `
+    + "only -- use --muted (4.9:1) or --disabled (4.5:1) for text",
+);
+
 // A renamed or unexported asset should fail here rather than render as a broken image.
 for (const [, src] of markup.matchAll(/\ssrc="(\/[^"]+)"/g)) {
   require(

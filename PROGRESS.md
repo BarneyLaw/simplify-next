@@ -172,6 +172,38 @@ Out of MVP scope:
 - medical diagnosis or health recommendations;
 - more than three itinerary stops or more than two demo replans.
 
+## Frontend, 2026-09-06
+
+Two commits on `fix/frontend-views-and-mascot`, Role 3.
+
+1. **Production fix.** Every view was rendering stacked down one page. `activateView()` was
+   correct; the stylesheet was not. The `hidden` attribute is enforced only by the UA rule
+   `[hidden]{display:none}`, which any author `display` beats -- and `.work{display:grid}` matches
+   every `.view`. `80ca854` had replaced the stylesheet wholesale and dropped
+   `[hidden]{display:none!important}` with it; no gate read CSS, so CI stayed green. Also moved
+   `.mtop`/`.mlocked` above the `@media` blocks that reveal them (a media rule adds no
+   specificity, so the base rules that sat after them won at every viewport and the mobile top bar
+   never appeared). Replaced the generated SVG logo with the new mascot, keyed off its black field
+   and derived at two sizes.
+2. **Design migration.** `public/index.html` moved to the achromatic system in `docs/DESIGN.md`:
+   the 248px rail and its duplicate mobile bar are replaced by one floating top nav over a centred
+   1280px column, must-haves became a single pill row, cards are lifted by 1px borders instead of
+   shadows, and Inter is loaded from the variable axis for the 440/456/652 weights. Safety chroma
+   (`--breach`/`--caution`/`--pass`) is retained deliberately and documented; everything else is
+   achromatic.
+
+`scripts/check_web.mjs` gained four gates so none of this can regress silently: the `[hidden]`
+rule, the `@media` source-order shape, local `src="/..."` assets existing in `public/`, and `--ash`
+never carrying text. Each was confirmed to fail before being confirmed to pass.
+
+**HANDOFF (Role 4, `.github/workflows/ci.yml`):** the S3 sync applies
+`--cache-control "no-cache"` to every object, so `mascot-128.png` (15 KB) and `mascot-512.png`
+(166 KB) revalidate on every load. Not a blocker; `*.png` deserves a long `max-age`.
+
+**Pre-existing failures, not Role 3:** `test_live_mode_fails_closed_without_production_trust_configuration`
+and `test_build_service_defaults_to_the_bedrock_parser` fail on clean `main` as well, from the
+LM Studio parser work.
+
 ## Demo rehearsal checklist
 
 - [ ] Start in `ADAPTSG_MODE=demo` unless every live credential has just been verified.
