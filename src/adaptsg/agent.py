@@ -64,7 +64,11 @@ from adaptsg.errors import (
     ToolUnavailable,
 )
 from adaptsg.planning import JourneyPlanner, JourneyReplanner
-from adaptsg.preference_parser import BedrockPreferenceParser, PreferenceParser
+from adaptsg.preference_parser import (
+    BedrockPreferenceParser,
+    LMStudioPreferenceParser,
+    PreferenceParser,
+)
 from adaptsg.settings import Settings, get_settings
 from adaptsg.tools.catalog import VenueCatalog
 from adaptsg.tools.environment import (
@@ -1416,7 +1420,11 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
         approval_cost_increase_sgd=resolved.adaptsg_approval_cost_increase_sgd,
         max_replans=resolved.adaptsg_max_replans,
     )
-    parser = BedrockPreferenceParser(settings=resolved, catalog=catalog)
+    parser: PreferenceParser = (
+        LMStudioPreferenceParser(settings=resolved, catalog=catalog)
+        if resolved.adaptsg_llm_provider == "lmstudio"
+        else BedrockPreferenceParser(settings=resolved, catalog=catalog)
+    )
     store: JourneyStore
     if resolved.adaptsg_journeys_table:
         session = boto3.Session(

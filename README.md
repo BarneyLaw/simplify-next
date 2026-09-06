@@ -103,6 +103,11 @@ Copy `.env.example` to `.env`. `.env` is ignored by Git.
 | Variable | Default | Purpose |
 |---|---:|---|
 | `ADAPTSG_MODE` | `demo` | `demo` for deterministic adapters; `live` for Bedrock and official APIs |
+| `ADAPTSG_LLM_PROVIDER` | `bedrock` | Live-mode extraction provider: `bedrock` or `lmstudio` |
+| `LMSTUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible server |
+| `LMSTUDIO_MODEL_ID` | `local-model` | Model identifier loaded in LM Studio |
+| `LMSTUDIO_MAX_TOKENS` | `1200` | Response cap for local extraction |
+| `LMSTUDIO_TIMEOUT_SECONDS` | `60` | Local models are slow to first token |
 | `AWS_REGION` | `us-east-1` | Bedrock region used by this hackathon account |
 | `AWS_PROFILE` | empty | Preferred local AWS CLI/SSO profile |
 | `AWS_ACCESS_KEY_ID` | empty | Temporary credential when a profile is unavailable |
@@ -132,6 +137,29 @@ If Bedrock extraction fails, the local app uses a conservative fallback and disp
 
 The deployed workshop stack uses `ap-southeast-1`. Keep all regional resources and GitHub variables
 on that region; Bedrock stays disabled for this demo phase.
+
+## Local LLM via LM Studio
+
+`LMStudioPreferenceParser` exercises the same live extraction path against a local LM Studio server,
+so the LangGraph flow can be tested without AWS credentials. It posts to the OpenAI-compatible
+`/chat/completions` endpoint with the same system prompt and `ConstraintExtraction` schema as
+Bedrock, and falls back to the deterministic parser on any transport, HTTP or validation failure.
+
+Start LM Studio, load a model, enable its local server on port 1234, then:
+
+```sh
+ADAPTSG_MODE=live \
+ADAPTSG_LLM_PROVIDER=lmstudio \
+LMSTUDIO_MODEL_ID="$(curl -s http://localhost:1234/v1/models | python -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])')" \
+python -c "
+from datetime import date
+from adaptsg.agent import build_service
+print(build_service().parser.parse('Plan 10am-4pm from Bishan, must visit National Gallery, budget \$60', journey_date=date.today()))
+"
+```
+
+Selecting `lmstudio` is itself the opt-in; `ADAPTSG_USE_BEDROCK` still gates Bedrock separately.
+`ADAPTSG_MODE=demo` makes no LLM call under either provider.
 
 ## AWS serverless deployment
 
