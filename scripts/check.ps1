@@ -9,7 +9,7 @@ python -m mypy
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 python -m pytest
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-python -m bandit -q -r src api streamlit_app.py
+python -m bandit -q -r src api
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 python -m pip_audit --skip-editable
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

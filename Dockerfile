@@ -11,16 +11,15 @@ RUN groupadd --system adaptsg && useradd --system --gid adaptsg --create-home ad
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
-RUN python -m pip install ".[ui]"
+RUN python -m pip install "."
 
-COPY .streamlit ./.streamlit
-COPY streamlit_app.py ./streamlit_app.py
+COPY public ./public
 
 USER adaptsg
-EXPOSE 8501
+EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"
 
-CMD ["streamlit", "run", "streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+CMD ["uvicorn", "adaptsg.web_api:app", "--host=0.0.0.0", "--port=8000"]
 

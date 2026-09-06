@@ -42,7 +42,7 @@ jobs:
       - name: Unit and scenario tests
         run: python -m pytest
       - name: Security lint
-        run: python -m bandit -q -r src api streamlit_app.py
+        run: python -m bandit -q -r src api
       - name: Dependency audit
         run: python -m pip_audit --skip-editable
       - name: Browser JavaScript syntax
@@ -112,9 +112,9 @@ jobs:
       AWS_CLOUDFORMATION_ROLE_ARN: ${{ vars.AWS_CLOUDFORMATION_ROLE_ARN }}
       AWS_SAM_ARTIFACT_BUCKET: ${{ vars.AWS_SAM_ARTIFACT_BUCKET }}
       ADAPTSG_STACK_NAME: ${{ vars.ADAPTSG_STACK_NAME || 'adaptsg-demo' }}
-      ADAPTSG_ALLOWED_CORS_ORIGIN: ${{ vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8501' }}
-      ADAPTSG_COGNITO_CALLBACK_URL: ${{ vars.ADAPTSG_COGNITO_CALLBACK_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8501' }}
-      ADAPTSG_COGNITO_LOGOUT_URL: ${{ vars.ADAPTSG_COGNITO_LOGOUT_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8501' }}
+      ADAPTSG_ALLOWED_CORS_ORIGIN: ${{ vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8000' }}
+      ADAPTSG_COGNITO_CALLBACK_URL: ${{ vars.ADAPTSG_COGNITO_CALLBACK_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8000' }}
+      ADAPTSG_COGNITO_LOGOUT_URL: ${{ vars.ADAPTSG_COGNITO_LOGOUT_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8000' }}
       ADAPTSG_PROVIDER_SECRET_NAME: ${{ vars.ADAPTSG_PROVIDER_SECRET_NAME }}
     steps:
       - uses: actions/checkout@v4

@@ -14,17 +14,17 @@ Parameters:
     Description: Demo is deterministic and makes no Bedrock or live-provider calls.
   AllowedCorsOrigin:
     Type: String
-    Default: http://localhost:8501
+    Default: http://localhost:8000
     AllowedPattern: ^https?://[^*]+$
     Description: Exact trusted browser origin; wildcards are rejected.
   CognitoCallbackUrl:
     Type: String
-    Default: http://localhost:8501
+    Default: http://localhost:8000
     Description: Exact browser OAuth callback URL, including its callback path when used.
     AllowedPattern: ^https?://[^*]+$
   CognitoLogoutUrl:
     Type: String
-    Default: http://localhost:8501
+    Default: http://localhost:8000
     Description: Exact browser destination after Cognito logout.
     AllowedPattern: ^https?://[^*]+$
   EnableSelfSignUp:
