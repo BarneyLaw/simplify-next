@@ -57,7 +57,33 @@ surface and solid edge. The pinned badge literals in `modeBadge()` mirror
 `adaptsg.presentation.mode_badge` and are compared verbatim by a gate; restyle the banner, never
 retype the strings.
 
-**4. Not everything the reference specifies exists here.**
+**4. One translucent surface: the nav, and only the nav.**
+The reference's nav is a floating bar over an opaque page and its surfaces list stops at
+`#ffffff` / `#f2f2f2`. AdaptSG's nav is a frosted pill instead: `--veil` (`--mist` at 72%) behind
+`backdrop-filter:blur(14px)`, with `--topbar` transparent so no white band boxes it in and content
+stays partly visible scrolling under it.
+
+Two constraints ride on that, and both are easy to lose:
+
+- **No `saturate()` in the blur.** The frosted-glass recipe everyone reaches for adds saturation.
+  Here the only chroma on the page is `--breach`/`--caution`/`--pass`, which encode a safety
+  verdict; a chip must not read stronger for happening to pass behind the nav.
+- **Everything textual inside the veil keeps an opaque ground.** Contrast can no longer be read off
+  the pill's own fill, because it is partly whatever is behind it. Measured through the veil,
+  `--disabled` is 4.2:1 against plain `--canvas` and 2.5:1 over a `--breach` chip — so `.pill.off`
+  takes `--canvas` as `.pill.go` already did, and is back to a fixed 4.5:1. `--ink` clears 10:1
+  against every backdrop the page can put there and needs no ground.
+
+`--veil-edge` (`rgba(20,20,20,.10)`) is the pill's hairline. `--fog` cannot do that job here: at
+`#ededed` it is indistinguishable from the veil's own tone, and the pill needs a boundary against
+arbitrary content, not against white. This is the one place a border colour is not achromatic-flat,
+and it is still achromatic.
+
+An `@supports` fallback returns the pill to opaque `--mist` where `backdrop-filter` is unavailable.
+A flat 72% tint over live content is the low-contrast case the blur exists to prevent, so the
+degraded path is opaque, not translucent.
+
+**5. Not everything the reference specifies exists here.**
 - `saans` is not licensed. Inter is the substitute the reference names, loaded from the variable
   axis (`wght@400..700`) — **not** a list of static instances, or the browser silently snaps 440,
   456 and 652 to 400 and 600 with no error.
@@ -73,6 +99,7 @@ retype the strings.
 ```css
 --ink:#141414;  --canvas:#ffffff; --muted:#707070; --disabled:#767676;
 --ash:#adadad;  --fog:#ededed;    --mist:#f2f2f2;  --silver:#c2c2c2;
+--veil:rgba(242,242,242,.72); --veil-edge:rgba(20,20,20,.10);
 --breach:#b42318; --caution:#b54708; --pass:#067647;
 --w-body:400; --w-ui:440; --w-mid:456; --w-head:600; --w-display:652;
 --r-pill:9999px; --r-lg:24px; --r-card:16px; --r-sm:8px;
@@ -83,6 +110,8 @@ retype the strings.
 Surfaces: page and card are both `--canvas`, separated by a 1px `--fog` border rather than a
 background change. `--mist` is the inner fill for the nav pill, inputs and must-have pills.
 **Cards never take a box-shadow** — `--ring` exists only for button hover.
+`--veil`/`--veil-edge` are the floating nav pill and nothing else; see deviation 4 before
+reusing them anywhere.
 
 ---
 

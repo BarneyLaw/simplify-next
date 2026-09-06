@@ -194,7 +194,7 @@ Out of MVP scope:
 
 ## Frontend, 2026-09-06
 
-Two commits on `fix/frontend-views-and-mascot`, Role 3.
+Six commits on `fix/frontend-views-and-mascot`, Role 3.
 
 1. **Production fix.** Every view was rendering stacked down one page. `activateView()` was
    correct; the stylesheet was not. The `hidden` attribute is enforced only by the UA rule
@@ -212,17 +212,53 @@ Two commits on `fix/frontend-views-and-mascot`, Role 3.
    (`--breach`/`--caution`/`--pass`) is retained deliberately and documented; everything else is
    achromatic.
 
+3. **CI unblocked.** PR #38 was red on ruff, and the failure was not reproducible in any working
+   tree: it lived only in `5d2c1a3 Merge branch 'main'`, which resolved `src/adaptsg/settings.py`
+   by taking main's import line and the branch's class body, leaving `@field_validator` bound to
+   nothing (F821) and `ValidationError` orphaned in `tests/test_settings.py` after the three tests
+   using it were dropped (F401). Both restored, not deleted -- `.env.example` still ships four
+   blank numerics, so removing `_blank_is_unset` would have traded a lint error for an import-time
+   crash on any copied `.env`. Six `mypy --strict` errors sat immediately behind the ruff one.
+4. **LM Studio removed** (owner's call: extraction is tested against Bedrock directly). main had
+   already dropped the provider; the merge kept this branch's `LMStudioPreferenceParser` reading
+   `settings.lmstudio_*` fields that no longer exist, which is what those six type errors were.
+   `preference_parser.py` and its tests take main's side; `.env.example` and the README section go
+   with them. The parser protocol, deterministic fallback and Bedrock path are untouched.
+5. **Mascot re-derived.** `public/mascot-{128,512}.png` carried an opaque blue field -- the old
+   master's neon glow, preserved as paint by the flood-fill key that used to be documented in the
+   role file. The master is now already keyed, so derivation is crop-to-alpha-bbox plus a
+   premultiplied LANCZOS resize (premultiply is not optional: the transparent field is RGB black,
+   and Pillow resizes channels independently). Alpha-0 pixels 48.6% -> 59.0%; 512px file 166 KB ->
+   135 KB; intrinsic sizes 512x352 / 128x88, with the three `<img class="mark">` tags updated.
+6. **Nav floats.** `.topbar` no longer paints an opaque `--canvas` band; the pill is `--veil`
+   (`--mist` at 72%) behind a 14px backdrop blur, so content is partly visible scrolling under it.
+   `pointer-events` is split band/pill so the transparent gutter cannot eat clicks. No `saturate()`
+   -- the only chroma on the page is a safety verdict and must not be amplified in passing. Through
+   the veil `--disabled` measures 4.2:1 on canvas and 2.5:1 over a `--breach` chip, so `.pill.off`
+   took the opaque `--canvas` ground `.pill.go` already had. Recorded as deviation 4 in
+   `docs/DESIGN.md`.
+
 `scripts/check_web.mjs` gained four gates so none of this can regress silently: the `[hidden]`
 rule, the `@media` source-order shape, local `src="/..."` assets existing in `public/`, and `--ash`
 never carrying text. Each was confirmed to fail before being confirmed to pass.
 
 **HANDOFF (Role 4, `.github/workflows/ci.yml`):** the S3 sync applies
 `--cache-control "no-cache"` to every object, so `mascot-128.png` (15 KB) and `mascot-512.png`
-(166 KB) revalidate on every load. Not a blocker; `*.png` deserves a long `max-age`.
+(135 KB) revalidate on every load. Not a blocker; `*.png` deserves a long `max-age`.
 
-**Pre-existing failures, not Role 3:** `test_live_mode_fails_closed_without_production_trust_configuration`
-and `test_build_service_defaults_to_the_bedrock_parser` fail on clean `main` as well, from the
-LM Studio parser work.
+**Gate status:** `./scripts/check.sh` passes locally except `sam`, which is not installed here
+(`cfn-lint` covers both templates).
+
+**HANDOFF (Role 1, `tests/test_agent_and_api.py`):**
+`test_live_mode_fails_closed_without_production_trust_configuration` passes in CI and from any
+other working directory, but fails whenever it is run from a repo root holding a configured `.env`.
+`Settings(env_file=".env")` reads that file regardless of the process environment, so a developer
+with `ADAPTSG_AUTHENTICATION_MODE=cognito` set locally inverts a fail-closed assertion into a pass
+and sees a permanently red local gate. `Settings(_env_file=None, adaptsg_mode="live")` -- the form
+the other tests in `tests/test_settings.py` already use -- would pin it. Not Role 3's file.
+
+The earlier note here about two pre-existing LM Studio failures is superseded: the second test went
+with the provider, and the first is the `.env` issue above rather than a defect.
 
 ## Demo rehearsal checklist
 
