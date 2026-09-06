@@ -96,6 +96,28 @@ degraded path is opaque, not translucent.
   multi-line pill is not what the reference is describing.
 - The Tailwind v4 token block is omitted: this client has no build step and no Tailwind.
 
+**6. No eyebrow kickers, and no em dashes.**
+The client used to put a small uppercase label above most headings: `Plan with confidence` over the
+signed-out hero, `Secure access` over the sign-in card, `Proposed plan` and `Your accepted plan`
+over two `h1`s that both read `Current plan`. Deviation 3 already objected to that shape once, for
+the provenance banner. The rest are gone for the same reason: they announced the screen a second
+time in a smaller voice, and on the signed-out view they announced nothing at all. The `h1` names
+the screen. There is no `.eyebrow` class any more, and `.origins legend` no longer borrows its
+declarations.
+
+Two labels survive as words rather than kickers, on `.label` (16px, `--w-mid`, `--muted`, no
+tracking, no uppercase): `Your must-haves`, which is the only visible name for the constraint pill
+row, and `Stop N, now` / `Stop N, suggested`, which are the only text distinguishing the two halves
+of the approval comparison. The suggested card's `.blue` fill is colour-only signalling and cannot
+carry that on its own.
+
+Copy uses no em dashes. They were the page's default connector, in eleven places across markup and
+rendered strings, and they read as machine-written. A comma, a colon, a full stop or a bracket says
+the same thing. En dashes stay in numeric ranges, where they are what the range means, so opening
+hours still render as `09:00–17:00`. This is a copy rule, not a parsing rule; the regex in
+`preference_parser.py` still accepts a hyphen, an en dash or an em dash from the traveller, because
+that is input, not prose.
+
 ## Tokens as implemented
 
 ```css
