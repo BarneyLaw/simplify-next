@@ -11,6 +11,7 @@ import httpx
 from adaptsg.domain import Location, RouteLeg, ToolResult, TravelMode
 from adaptsg.errors import ToolUnavailable
 from adaptsg.tools.freshness import FreshnessKind, failed_result, successful_result
+from adaptsg.tools.redaction import redact_secrets
 
 
 class RoutingClient(Protocol):
@@ -164,7 +165,9 @@ class OneMapRoutingClient:
             payload = cast(dict[str, Any], response.json())
             duration_seconds, route_distance, walking_distance = self._route_metrics(payload, mode)
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise ToolUnavailable(f"OneMap route verification failed: {exc}") from exc
+            raise ToolUnavailable(
+                f"OneMap route verification failed: {redact_secrets(str(exc))}"
+            ) from exc
 
         duration_minutes = max(1, ceil(duration_seconds / 60))
         cost = self._cost(mode, route_distance)

@@ -9,6 +9,7 @@ from adaptsg.domain import (
     FreshnessStatus,
     Itinerary,
     Location,
+    LocationSearchResult,
     TravelMode,
     VenueCategory,
     VenueSearchFilters,
@@ -19,6 +20,14 @@ from adaptsg.tools.environment import DemoEnvironmentClient, LiveEnvironmentClie
 from adaptsg.tools.freshness import FreshnessKind, classify_freshness
 from adaptsg.tools.location import DemoLocationClient, OneMapLocationClient
 from adaptsg.tools.metrics import calculate_plan_metrics
+from adaptsg.tools.origin import (
+    MAX_ORIGIN_QUERIES,
+    is_confident,
+    is_vague_origin,
+    origin_query_variants,
+    rank_origin_candidates,
+)
+from adaptsg.tools.redaction import REDACTED, redact_secrets
 from adaptsg.tools.routing import DemoRoutingClient, OneMapRoutingClient, distance_metres
 
 SGT = ZoneInfo("Asia/Singapore")
@@ -480,3 +489,113 @@ def test_train_disruptions_rejects_an_invalid_value_shape() -> None:
 def test_train_disruptions_rejects_a_non_object_record_in_the_legacy_shape() -> None:
     with pytest.raises(ValueError, match="invalid record"):
         LiveEnvironmentClient._train_disruptions({"value": ["not-a-record"]})
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        # Regression: OneMap holds (NS17) and (CC15) as separate rows, so the
+        # combined signage on the station itself matches nothing.
+        (
+            "Bishan MRT Station (NS17/CC15)",
+            ("Bishan MRT Station (NS17/CC15)", "Bishan MRT Station (NS17)", "Bishan MRT Station"),
+        ),
+        ("Toa Payoh", ("Toa Payoh", "Toa Payoh MRT Station")),
+        # A three-word place name is not broadened into a station of the same name.
+        ("Singapore Botanic Gardens", ("Singapore Botanic Gardens",)),
+        ("", ()),
+    ],
+)
+def test_origin_query_variants(label: str, expected: tuple[str, ...]) -> None:
+    assert origin_query_variants(label) == expected
+
+
+def test_origin_query_variants_are_bounded() -> None:
+    variants = origin_query_variants("Dhoby Ghaut MRT Station (NS24/NE6/CC1)")
+    assert len(variants) <= MAX_ORIGIN_QUERIES
+
+
+@pytest.mark.parametrize(
+    ("label", "vague"),
+    [
+        ("a convenient MRT station", True),
+        ("an MRT station", True),
+        ("somewhere central", True),
+        ("anywhere in Singapore", True),
+        ("", True),
+        ("Bishan MRT Station", False),
+        ("Toa Payoh", False),
+    ],
+)
+def test_is_vague_origin(label: str, vague: bool) -> None:
+    assert is_vague_origin(label) is vague
+
+
+def _search_result(label: str, lat: float = 1.3, lng: float = 103.8) -> LocationSearchResult:
+    return LocationSearchResult(
+        label=label,
+        location=Location(lat=lat, lng=lng),
+        source="onemap_search",
+        source_timestamp=datetime(2026, 9, 2, tzinfo=UTC),
+    )
+
+
+def test_rank_origin_candidates_orders_by_match_quality() -> None:
+    results = (
+        _search_result("BISHAN MRT STATION EXIT A"),
+        _search_result("BISHAN MRT STATION (NS17)"),
+        _search_result("BISHAN MRT STATION"),
+    )
+    ranked = rank_origin_candidates("Bishan MRT Station", results)
+    # Exact first, then the bracket-stripped equivalent; a station exit is not
+    # the station, so it never outranks either.
+    assert [result.label for result in ranked] == [
+        "BISHAN MRT STATION",
+        "BISHAN MRT STATION (NS17)",
+        "BISHAN MRT STATION EXIT A",
+    ]
+
+
+def test_is_confident_accepts_one_station_but_not_two_places() -> None:
+    same_station = (
+        _search_result("BISHAN MRT STATION EXIT A", lat=1.35131, lng=103.8491),
+        _search_result("BISHAN MRT STATION EXIT B", lat=1.35140, lng=103.8493),
+    )
+    assert is_confident("Bishan station", same_station) is True
+
+    different_places = (
+        _search_result("ORCHARD ROAD", lat=1.3048, lng=103.8318),
+        _search_result("ORCHARD BOULEVARD", lat=1.3020, lng=103.8239),
+    )
+    assert is_confident("Orchard", different_places) is False
+    assert is_confident("Orchard", ()) is False
+
+
+def test_provider_errors_never_carry_the_credential() -> None:
+    """The 503 detail reaches the browser, so a leaked token would be published."""
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(429, json={}))
+    )
+    with pytest.raises(ToolUnavailable) as error:
+        OneMapLocationClient(token="SUPER-SECRET-TOKEN", client=client).search("Bishan")
+
+    assert "SUPER-SECRET-TOKEN" not in str(error.value)
+    assert REDACTED in str(error.value)
+    # The rest of the message stays useful for diagnosis.
+    assert "429" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("text", "leaked"),
+    [
+        ("https://x/api?token=abc123&pageNum=1", "abc123"),
+        ("https://x/api?api_key=abc123", "abc123"),
+        ("https://x/api?AccountKey=abc123", "abc123"),
+    ],
+)
+def test_redact_secrets_covers_the_credential_parameter_names_in_use(
+    text: str, leaked: str
+) -> None:
+    redacted = redact_secrets(text)
+    assert leaked not in redacted
+    assert REDACTED in redacted

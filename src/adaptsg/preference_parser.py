@@ -23,8 +23,23 @@ from adaptsg.domain import (
 )
 from adaptsg.settings import Settings
 from adaptsg.tools.catalog import VenueCatalog
+from adaptsg.tools.origin import DEFAULT_ORIGIN_LABEL, is_vague_origin
 
 LOGGER = logging.getLogger(__name__)
+
+DEFAULTED_ORIGIN_WARNING = (
+    f"No starting point was named, so the day is planned from {DEFAULT_ORIGIN_LABEL}. "
+    "Name a station or address to start somewhere else."
+)
+
+
+def _defaulted_origin_warnings(prompt: str, start_label: str) -> tuple[str, ...]:
+    """Disclose an origin the traveller never asked for, whichever parser chose it."""
+    if start_label != DEFAULT_ORIGIN_LABEL:
+        return ()
+    if DeterministicPreferenceParser._explicit_start_label(prompt) is not None:
+        return ()
+    return (DEFAULTED_ORIGIN_WARNING,)
 
 
 class PreferenceParser(Protocol):
@@ -32,7 +47,7 @@ class PreferenceParser(Protocol):
 
 
 class ConstraintExtraction(StrictModel):
-    start_label: str = "Toa Payoh"
+    start_label: str = DEFAULT_ORIGIN_LABEL
     wheelchair_accessible_required: bool = True
     max_walking_distance_m: int = Field(default=400, ge=0, le=2_000)
     lunch_latest: time = time(13, 0)
@@ -124,7 +139,10 @@ class DeterministicPreferenceParser:
         return ParseOutcome(
             request=extraction.to_request(journey_date),
             source="deterministic_fallback_v1",
-            warnings=("Bedrock was not called; review extracted constraints before use.",),
+            warnings=(
+                "Bedrock was not called; review extracted constraints before use.",
+                *_defaulted_origin_warnings(prompt, extraction.start_label),
+            ),
         )
 
     def _mentioned_venue_ids(self, lowered: str) -> frozenset[str]:
@@ -159,12 +177,18 @@ class DeterministicPreferenceParser:
 
     @staticmethod
     def _start_label(prompt: str) -> str:
-        return DeterministicPreferenceParser._explicit_start_label(prompt) or "Toa Payoh"
+        return DeterministicPreferenceParser._explicit_start_label(prompt) or DEFAULT_ORIGIN_LABEL
 
     @staticmethod
     def _explicit_start_label(prompt: str) -> str | None:
+        """Capture the origin phrase only, not the rest of the sentence.
+
+        The terminator has to include clause openers: "start at X and finish by
+        5pm" would otherwise capture everything up to the full stop.
+        """
         match = re.search(
-            r"(?:starting|start)\s+(?:from|at)\s+([A-Za-z0-9 &'()/-]+?)(?:[,.]|$)",
+            r"(?:starting|start)\s+(?:from|at)\s+([A-Za-z0-9 &'()/-]+?)"
+            r"(?:[,.;:]|\s+(?:and|at|by|around|before|after|then|to\s+visit)\b|$)",
             prompt,
             flags=re.IGNORECASE,
         )
@@ -237,13 +261,12 @@ class BedrockPreferenceParser:
             content = response["output"]["message"]["content"]
             text = next(item["text"] for item in content if "text" in item)
             extraction = ConstraintExtraction.model_validate_json(self._clean_json(text))
-            explicit_start_label = self.fallback._explicit_start_label(prompt)
-            if explicit_start_label is not None:
-                extraction = extraction.model_copy(update={"start_label": explicit_start_label})
+            extraction = self._reconcile_start_label(prompt, extraction)
             usage = response.get("usage", {})
             return ParseOutcome(
                 request=extraction.to_request(journey_date),
                 source=f"bedrock:{self.settings.bedrock_model_id}",
+                warnings=_defaulted_origin_warnings(prompt, extraction.start_label),
                 token_usage=TokenUsage(
                     input_tokens=int(usage.get("inputTokens", 0)),
                     output_tokens=int(usage.get("outputTokens", 0)),
@@ -268,6 +291,22 @@ class BedrockPreferenceParser:
                     )
                 }
             )
+
+    @staticmethod
+    def _reconcile_start_label(
+        prompt: str, extraction: ConstraintExtraction
+    ) -> ConstraintExtraction:
+        """Keep the origin the user actually typed, unless it names no place.
+
+        The regex sees the literal phrasing, which is what the traveller has to
+        recognise in the plan; normalising it for the gazetteer is the
+        resolver's job, not the parser's. A vague capture ("a convenient MRT
+        station") is the one case where the model's reading is worth more.
+        """
+        explicit = DeterministicPreferenceParser._explicit_start_label(prompt)
+        if explicit is None or is_vague_origin(explicit):
+            return extraction
+        return extraction.model_copy(update={"start_label": explicit})
 
     def _bedrock_client(self) -> Any:
         if self._client is None:

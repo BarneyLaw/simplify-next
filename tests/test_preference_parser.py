@@ -11,6 +11,7 @@ from adaptsg.preference_parser import (
 )
 from adaptsg.settings import Settings
 from adaptsg.tools.catalog import VenueCatalog
+from adaptsg.tools.origin import DEFAULT_ORIGIN_LABEL
 
 
 class FakeBedrockClient:
@@ -229,3 +230,39 @@ def test_demo_mode_never_calls_bedrock() -> None:
     )
     parser.parse("Plan it", journey_date=date(2026, 9, 2))
     assert client.calls == []
+
+
+def test_explicit_start_label_stops_at_the_clause_boundary() -> None:
+    """Regression: the capture used to run to the full stop and swallow the rest."""
+    parser = DeterministicPreferenceParser(VenueCatalog())
+    outcome = parser.parse(
+        "Plan a day, start at Dhoby Ghaut MRT (NS24/NE6/CC1) and finish by 5pm.",
+        journey_date=date(2026, 9, 8),
+    )
+    assert outcome.request.start_label == "Dhoby Ghaut MRT (NS24/NE6/CC1)"
+
+
+def test_prompt_without_an_origin_uses_the_documented_default_hub() -> None:
+    parser = DeterministicPreferenceParser(VenueCatalog())
+    outcome = parser.parse(
+        "Plan a full-day outing for two people in Singapore, including an elderly "
+        "wheelchair user. Start and end at a convenient MRT station.",
+        journey_date=date(2026, 9, 8),
+    )
+    assert outcome.request.start_label == DEFAULT_ORIGIN_LABEL
+
+
+def test_a_defaulted_origin_is_disclosed_not_assumed() -> None:
+    """A day starting somewhere the traveller never named has to say so."""
+    parser = DeterministicPreferenceParser(VenueCatalog())
+    defaulted = parser.parse(
+        "Plan a full-day outing for two people, keeping walking distances short.",
+        journey_date=date(2026, 9, 8),
+    )
+    assert defaulted.request.start_label == DEFAULT_ORIGIN_LABEL
+    assert any(DEFAULT_ORIGIN_LABEL in warning for warning in defaulted.warnings)
+
+    named = parser.parse(
+        "Plan a day starting from Bishan MRT Station.", journey_date=date(2026, 9, 8)
+    )
+    assert not any("No starting point was named" in warning for warning in named.warnings)

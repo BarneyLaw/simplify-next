@@ -234,7 +234,6 @@ await test("a 404 for /runtime-config.json falls back to the local no-auth demo 
   assert(context.document.getElementById("view-landing").hidden === false, "the landing view must show");
   assert(context.document.getElementById("view-signedout").hidden === true, "sign-in must be skipped entirely");
   assert(context.document.getElementById("trip-navigation").hidden === false, "local demo navigation must remain available");
-  assert(context.document.getElementById("mode-banner").hidden === false, "the planning view must show provenance");
   assert(fetchLog.length === 2, "the fallback must still be followed by the ordinary health check");
 });
 
@@ -275,7 +274,6 @@ await test("sign-in and sign-up redirect with correct params and distinct PKCE m
   assert(context.document.getElementById("view-signedout").hidden === false, "no session must land signed-out");
   assert(context.document.getElementById("trip-navigation").hidden === true, "signed-out users must not see journey navigation");
   assert(context.document.getElementById("sign-out").hidden === true, "signed-out users must not see sign out");
-  assert(context.document.getElementById("mode-banner").hidden === true, "signed-out users must not see unresolved provenance");
 
   await context.beginSignIn("signin");
   const firstVerifier = sessionStorage.getItem("adaptsg.pkce.verifier");
@@ -629,6 +627,80 @@ await test("a mutating call retains its Idempotency-Key header and expected_vers
   assert(call.init.headers["Idempotency-Key"] === "idem-xyz");
   const body = JSON.parse(call.init.body);
   assert(body.expected_version === 2);
+});
+
+// --- An unresolvable start location is a question, not an outage -------------------
+
+await test("a 422 origin_not_verified surfaces its candidates on the thrown error", async () => {
+  const config = makeConfig({ withAuth: false });
+  const { context } = await runScenario({
+    fetchResponses: [
+      jsonResponse(200, config),
+      HEALTH_OK,
+      jsonResponse(422, {
+        code: "origin_not_verified",
+        detail: "'Orchard' matches several places in Singapore",
+        query: "Orchard",
+        candidates: ["ORCHARD ROAD", "ORCHARD BOULEVARD"],
+      }),
+    ],
+  });
+
+  let caught = null;
+  try {
+    await context.mutate("/api/journeys", { prompt: "x", journey_date: "2026-09-02" }, "idem-o1");
+  } catch (error) {
+    caught = error;
+  }
+  assert(caught !== null, "an unresolved origin must reject");
+  assert(caught.code === "origin_not_verified");
+  assert(caught.candidates.length === 2, "the candidates must reach the caller");
+  assert(caught.query === "Orchard");
+});
+
+await test("the origin chooser offers every candidate and never repeats the outage copy", async () => {
+  const config = makeConfig({ withAuth: false });
+  const { context } = await runScenario({
+    fetchResponses: [jsonResponse(200, config), HEALTH_OK],
+  });
+
+  context.showOriginChooser({
+    code: "origin_not_verified",
+    message: "'Orchard' matches several places in Singapore",
+    candidates: ["ORCHARD ROAD", "ORCHARD BOULEVARD"],
+    query: "Orchard",
+  });
+
+  const alert = context.document.getElementById("alert");
+  assert(alert.hidden === false, "the chooser must be visible");
+  assert(alert.innerHTML.includes("ORCHARD ROAD"), "each candidate must be offered");
+  assert(alert.innerHTML.includes("ORCHARD BOULEVARD"));
+  assert(alert.innerHTML.includes('type="radio"'), "candidates must be a real radio group");
+  assert(
+    !alert.innerHTML.includes("could not reach the weather"),
+    "an unrecognised starting point must not be reported as a provider outage",
+  );
+  assert(context.document.getElementById("alert-title").focusCount === 1);
+});
+
+await test("choosing a candidate replans with that label and never with coordinates", async () => {
+  const config = makeConfig({ withAuth: false });
+  const { context, fetchLog } = await runScenario({
+    fetchResponses: [
+      jsonResponse(200, config),
+      HEALTH_OK,
+      jsonResponse(200, { journey_id: "J9", version: 1, status: "draft" }),
+    ],
+  });
+
+  await context.submitPlan("ORCHARD ROAD");
+
+  const call = fetchLog.at(-1);
+  assert(call.init.method === "POST");
+  const body = JSON.parse(call.init.body);
+  assert(body.start_label === "ORCHARD ROAD", "the chosen label must be sent");
+  assert(body.lat === undefined && body.lng === undefined, "the client must never send coordinates");
+  assert(typeof call.init.headers["Idempotency-Key"] === "string", "the retry needs its own key");
 });
 
 for (const result of results) {

@@ -34,6 +34,7 @@ from adaptsg.domain import (
     JourneyRequest,
     JourneyState,
     JourneyStatus,
+    LocationSearchResult,
     MonitoringOutcome,
     ParseOutcome,
     PlanOutcome,
@@ -59,6 +60,7 @@ from adaptsg.errors import (
     JourneyNotFound,
     NoFeasibleItinerary,
     OperationInProgress,
+    OriginNotVerified,
     RetentionConfigurationMissing,
     StaleJourneyVersion,
     ToolUnavailable,
@@ -77,6 +79,13 @@ from adaptsg.tools.environment import (
     LiveEnvironmentClient,
 )
 from adaptsg.tools.location import DemoLocationClient, LocationClient, OneMapLocationClient
+from adaptsg.tools.origin import (
+    DEFAULT_ORIGIN_LABEL,
+    is_confident,
+    is_vague_origin,
+    origin_query_variants,
+    rank_origin_candidates,
+)
 from adaptsg.tools.routing import DemoRoutingClient, OneMapRoutingClient
 from adaptsg.validation import ItineraryValidator
 
@@ -89,8 +98,10 @@ IDEMPOTENCY_KEY = re.compile(r"^[\x21-\x7e]{8,200}$")
 class PlanGraphState(TypedDict):
     prompt: str
     journey_date: date
+    start_label_override: NotRequired[str]
     parsed: NotRequired[ParseOutcome]
     itinerary: NotRequired[Itinerary]
+    location_warnings: NotRequired[tuple[str, ...]]
     error: NotRequired[str]
 
 
@@ -1320,13 +1331,19 @@ class AdaptSGService:
             if "error" in state:
                 return {}
             parsed = state["parsed"]
+            override = state.get("start_label_override")
+            requested = (
+                parsed.request.model_copy(update={"start_label": override})
+                if override
+                else parsed.request
+            )
             try:
-                request = self._resolve_start_location(parsed.request)
+                request, location_warnings = self._resolve_start_location(requested)
                 itinerary = self.planner.create(
                     request,
                     parser_source=parsed.source,
                 )
-                return {"itinerary": itinerary}
+                return {"itinerary": itinerary, "location_warnings": location_warnings}
             except NoFeasibleItinerary as exc:
                 return {"error": str(exc)}
 
@@ -1337,42 +1354,90 @@ class AdaptSGService:
         graph.add_edge("plan_and_validate", END)
         return graph.compile()
 
-    def create_plan(self, prompt: str, *, journey_date: date) -> PlanOutcome:
+    def create_plan(
+        self,
+        prompt: str,
+        *,
+        journey_date: date,
+        start_label: str | None = None,
+    ) -> PlanOutcome:
+        initial: PlanGraphState = {"prompt": prompt, "journey_date": journey_date}
+        if start_label:
+            initial["start_label_override"] = start_label
         result = cast(
             PlanGraphState,
-            self._plan_graph.invoke({"prompt": prompt, "journey_date": journey_date}),  # type: ignore[attr-defined]
+            self._plan_graph.invoke(initial),  # type: ignore[attr-defined]
         )
         if "error" in result:
             raise NoFeasibleItinerary(result["error"])
         parsed = result["parsed"]
         return PlanOutcome(
             itinerary=result["itinerary"],
-            warnings=parsed.warnings,
+            warnings=parsed.warnings + result.get("location_warnings", ()),
             token_usage=parsed.token_usage,
         )
 
-    def _resolve_start_location(self, request: JourneyRequest) -> JourneyRequest:
+    def _resolve_start_location(
+        self, request: JourneyRequest
+    ) -> tuple[JourneyRequest, tuple[str, ...]]:
+        """Verify the origin against the gazetteer, disclosing any reinterpretation.
+
+        A query that matches nothing is a user-input problem, not an outage, so it
+        raises OriginNotVerified (422 with candidates) rather than ToolUnavailable.
+        A ToolUnavailable raised by the client itself still propagates untouched, so
+        a genuine provider failure keeps failing closed.
+        """
         if self.location is None:
-            return request
-        results = self.location.search(request.start_label)
-        if not results:
-            raise ToolUnavailable(
-                f"location verification returned no result for {request.start_label!r}"
+            return request, ()
+        warnings: tuple[str, ...] = ()
+        typed_label = request.start_label
+        if is_vague_origin(typed_label):
+            warnings += (
+                f"No specific starting point was given, so the day is planned from "
+                f"{DEFAULT_ORIGIN_LABEL}. Name a station or address to start elsewhere.",
             )
-        normalized_query = request.start_label.strip().casefold()
-        exact_matches = tuple(
-            result for result in results if result.label.strip().casefold() == normalized_query
-        )
-        if len(results) > 1 and len(exact_matches) != 1:
-            raise ToolUnavailable(
-                f"location verification was ambiguous for {request.start_label!r}; "
-                "use a more specific Singapore address"
+            typed_label = DEFAULT_ORIGIN_LABEL
+
+        ranked: tuple[LocationSearchResult, ...] = ()
+        matched_query = typed_label
+        for query in origin_query_variants(typed_label):
+            results = self.location.search(query)
+            if not results:
+                continue
+            candidates = rank_origin_candidates(query, results)
+            if is_confident(query, candidates):
+                ranked, matched_query = candidates, query
+                break
+            if not ranked:
+                # Keep the first real result set: it becomes the chooser's options
+                # if no later, narrower query resolves cleanly.
+                ranked, matched_query = candidates, query
+
+        if not ranked:
+            raise OriginNotVerified(
+                f"no Singapore location matches {typed_label!r}",
+                query=typed_label,
             )
-        selected = exact_matches[0] if exact_matches else results[0]
+        if not is_confident(matched_query, ranked):
+            raise OriginNotVerified(
+                f"{typed_label!r} matches several places in Singapore",
+                query=typed_label,
+                candidates=tuple(result.label for result in ranked[:5]),
+            )
+
+        selected = ranked[0]
         if not selected.label.strip() or not selected.source.strip():
             raise ToolUnavailable("location verification returned an unverified result")
-        return request.model_copy(
-            update={"start_label": selected.label, "start_location": selected.location}
+        reinterpreted = selected.label.strip().casefold() != request.start_label.strip().casefold()
+        if reinterpreted and not warnings:
+            warnings += (
+                f"Start location {request.start_label!r} was verified as {selected.label!r}.",
+            )
+        return (
+            request.model_copy(
+                update={"start_label": selected.label, "start_location": selected.location}
+            ),
+            warnings,
         )
 
     def start_journey(
@@ -1381,6 +1446,7 @@ class AdaptSGService:
         *,
         journey_date: date,
         idempotency_key: str,
+        start_label: str | None = None,
         principal: PrincipalContext | None = None,
     ) -> JourneyState:
         actor = self._principal_or_demo(principal)
@@ -1391,11 +1457,14 @@ class AdaptSGService:
                 "operation": "start_journey",
                 "prompt": prompt,
                 "journey_date": journey_date.isoformat(),
+                # A retry that picks a different origin is a different request,
+                # not a replay of the one that could not be verified.
+                "start_label": start_label or "",
             }
         )
 
         def mutation() -> tuple[JourneyState, None]:
-            outcome = self.create_plan(prompt, journey_date=journey_date)
+            outcome = self.create_plan(prompt, journey_date=journey_date, start_label=start_label)
             now = self._now()
             return (
                 JourneyState(

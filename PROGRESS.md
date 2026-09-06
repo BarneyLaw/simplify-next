@@ -169,6 +169,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r1-bedrock-runtime-region` | Separate the Bedrock runtime region from the Singapore application/data region | Merged in PR #48 |
 | `feature/r4-us-bedrock-deployment` | Deploy exact-resource access for the US Haiku 4.5 cross-region inference profile and verify the independent runtime region | Merged in PR #49; main run `34036188634` passed 24/24 posture checks |
 | `feature/r1-preserve-explicit-origin` | Preserve qualified user-supplied origins after Bedrock extraction so live location verification remains unambiguous | Merged in PR #50; main run `34037008396` deployed successfully |
+| `feature/origin-resolution-and-mode-banner` | Normalising query ladder for start locations, a candidate chooser for origins that cannot be pinned to one place, and removal of the standing Live/Demo banner | In review |
 
 ## External setup still required
 
@@ -298,6 +299,23 @@ with the provider, and the first is the `.env` issue above rather than a defect.
 - [ ] End on 0 hard violations, retained-plan percentage and bounded replans.
 
 ## Decision log
+
+- **Origins are normalised, not demanded:** OneMap holds each MRT line code as its own row, so
+  `Bishan MRT Station (NS17/CC15)` — the label the station actually carries — matched nothing and
+  failed the whole plan. Resolution now tries a bounded ladder of derived queries rather than
+  requiring a verbatim gazetteer hit, which had confined the product to hand-tuned sample prompts.
+- **"No match" is not "no service":** a query the gazetteer answered with nothing is a user-input
+  problem and raises `origin_not_verified` (422, with candidates to choose from). Only a provider
+  that could not answer raises `ToolUnavailable` (503) and fails closed under rule 10. Conflating
+  the two had shown an outage message for an unrecognised place name.
+- **Provider credentials never travel in error text:** httpx carries the full request URL in its
+  exception message and OneMap authenticates by query parameter, so a provider failure published
+  the API token in the 503 body the browser renders. Credential parameters are redacted at the
+  three tool boundaries that interpolate an exception.
+- **Provenance moved, not removed:** the standing Live/Demo banner stated the runtime mode before
+  there was a plan to qualify. Rule 11 is now carried by the evidence panel's `Runtime mode` row,
+  where it sits beside the values it describes, and a static gate holds it to the resolved
+  `/api/health` value.
 
 - **One orchestrator:** the problem needs bounded coordination, not a swarm.
 - **Curated venues:** reliability and unsupported-claim prevention outweigh catalog breadth in the MVP.

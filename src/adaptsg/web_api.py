@@ -46,6 +46,7 @@ from adaptsg.errors import (
     JourneyNotFound,
     NoFeasibleItinerary,
     OperationInProgress,
+    OriginNotVerified,
     ReplanLimitReached,
     StaleJourneyVersion,
     ToolUnavailable,
@@ -55,6 +56,10 @@ from adaptsg.errors import (
 class PlanApiRequest(StrictModel):
     prompt: str
     journey_date: date
+    # Set only when the caller picked one of the candidates returned by a prior
+    # origin_not_verified response. A label, never coordinates: the server
+    # re-verifies it against the gazetteer, so this cannot inject a location.
+    start_label: str | None = Field(default=None, max_length=200)
 
 
 class ReplanApiRequest(StrictModel):
@@ -110,6 +115,7 @@ ERROR_CODES: dict[type[AdaptSGError], str] = {
     InvalidJourneyTransition: "invalid_journey_transition",
     JourneyNotFound: "journey_not_found",
     NoFeasibleItinerary: "no_feasible_itinerary",
+    OriginNotVerified: "origin_not_verified",
     OperationInProgress: "operation_in_progress",
     ReplanLimitReached: "replan_limit_reached",
     StaleJourneyVersion: "stale_journey_version",
@@ -196,16 +202,19 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
             status_code = 409
         elif isinstance(exc, ToolUnavailable):
             status_code = 503
-        elif isinstance(exc, NoFeasibleItinerary):
+        elif isinstance(exc, (NoFeasibleItinerary, OriginNotVerified)):
             status_code = 422
         else:
             status_code = 422
-        content: dict[str, str | int] = {
+        content: dict[str, str | int | list[str]] = {
             "code": ERROR_CODES.get(type(exc), "adaptsg_error"),
             "detail": str(exc),
         }
         if isinstance(exc, StaleJourneyVersion) and exc.current_version is not None:
             content["current_version"] = exc.current_version
+        if isinstance(exc, OriginNotVerified):
+            content["query"] = exc.query
+            content["candidates"] = list(exc.candidates)
         return JSONResponse(status_code=status_code, content=content, headers=headers)
 
     @app.exception_handler(ClientError)
@@ -233,6 +242,7 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
         return resolved_service.start_journey(
             payload.prompt,
             journey_date=payload.journey_date,
+            start_label=payload.start_label,
             idempotency_key=_idempotency_key(request),
             principal=principal,
         )

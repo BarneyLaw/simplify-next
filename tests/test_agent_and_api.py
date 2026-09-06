@@ -67,6 +67,7 @@ from adaptsg.errors import (
     JourneyNotFound,
     NoFeasibleItinerary,
     OperationInProgress,
+    OriginNotVerified,
     ReplanLimitReached,
     RetentionConfigurationMissing,
     StaleJourneyVersion,
@@ -79,6 +80,7 @@ from adaptsg.settings import Settings
 from adaptsg.tools.catalog import VenueCatalog
 from adaptsg.tools.environment import DemoEnvironmentClient
 from adaptsg.tools.location import DemoLocationClient, LocationClient
+from adaptsg.tools.origin import DEFAULT_ORIGIN_LABEL
 from adaptsg.web_api import create_app
 
 
@@ -386,18 +388,20 @@ def test_start_location_is_resolved_before_live_planning(
     assert first_route.origin == Location(lat=1.2931, lng=103.8520)
 
 
-def test_start_location_rejects_ambiguous_or_unverified_results(
+def test_start_location_asks_the_user_when_it_cannot_pin_one_place(
     planner: JourneyPlanner, replanner: JourneyReplanner
 ) -> None:
+    """A query the gazetteer cannot resolve is an input problem, not an outage."""
     timestamp = datetime(2026, 9, 2, tzinfo=UTC)
     missing = Mock()
     missing.search.return_value = ()
-    with pytest.raises(ToolUnavailable, match="no result"):
+    with pytest.raises(OriginNotVerified) as missing_error:
         make_service(planner, replanner, location=missing).start_journey(
-            "Plan a safe day starting from Orchard.",
+            "Plan a safe day starting from Nowhere Place.",
             journey_date=date(2026, 9, 2),
             idempotency_key="missing-location-1",
         )
+    assert missing_error.value.candidates == ()
 
     ambiguous = Mock()
     ambiguous.search.return_value = (
@@ -414,12 +418,13 @@ def test_start_location_rejects_ambiguous_or_unverified_results(
             source_timestamp=timestamp,
         ),
     )
-    with pytest.raises(ToolUnavailable, match="ambiguous"):
+    with pytest.raises(OriginNotVerified) as ambiguous_error:
         make_service(planner, replanner, location=ambiguous).start_journey(
             "Plan a safe day starting from Orchard.",
             journey_date=date(2026, 9, 2),
             idempotency_key="ambiguous-location-1",
         )
+    assert ambiguous_error.value.candidates == ("Orchard Road", "Orchard Boulevard")
 
     unverified = Mock()
     unverified.search.return_value = (
@@ -436,6 +441,94 @@ def test_start_location_rejects_ambiguous_or_unverified_results(
             journey_date=date(2026, 9, 2),
             idempotency_key="unverified-location-1",
         )
+
+
+def test_provider_outage_still_fails_closed_as_tool_unavailable(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    """A gazetteer that cannot answer is distinct from one that answers 'no match'."""
+    outage = Mock()
+    outage.search.side_effect = ToolUnavailable("OneMap location verification failed: timeout")
+    with pytest.raises(ToolUnavailable, match="OneMap"):
+        make_service(planner, replanner, location=outage).start_journey(
+            "Plan a safe day starting from Orchard.",
+            journey_date=date(2026, 9, 2),
+            idempotency_key="outage-location-1",
+        )
+
+
+def test_start_location_ladder_recovers_from_a_multi_code_station_label(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    """Regression: OneMap indexes (NS17) and (CC15) separately, so the pair matches nothing."""
+    timestamp = datetime(2026, 9, 2, tzinfo=UTC)
+    resolved = LocationSearchResult(
+        label="BISHAN MRT STATION (NS17)",
+        location=Location(lat=1.35131, lng=103.8491),
+        source="onemap_search",
+        source_timestamp=timestamp,
+    )
+    location = Mock()
+    location.search.side_effect = lambda query: (
+        (resolved,) if query == "Bishan MRT Station (NS17)" else ()
+    )
+
+    draft = make_service(planner, replanner, location=location).start_journey(
+        "Plan a safe day starting from Bishan MRT Station (NS17/CC15).",
+        journey_date=date(2026, 9, 2),
+        idempotency_key="bishan-ladder-1",
+    )
+
+    assert draft.pending_initial_itinerary is not None
+    assert draft.pending_initial_itinerary.segments[0].route.origin_label == (
+        "BISHAN MRT STATION (NS17)"
+    )
+    assert location.search.call_args_list[0].args == ("Bishan MRT Station (NS17/CC15)",)
+    assert any("was verified as" in warning for warning in draft.warnings)
+
+
+def test_vague_origin_plans_from_the_documented_default_hub(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    """A prompt naming no starting point still plans, and says where it started."""
+    location = Mock()
+    location.search.side_effect = DemoLocationClient().search
+
+    draft = make_service(planner, replanner, location=location).start_journey(
+        "Plan a full-day outing for two people, starting from a convenient MRT station.",
+        journey_date=date(2026, 9, 2),
+        idempotency_key="vague-origin-1",
+    )
+
+    assert draft.pending_initial_itinerary is not None
+    assert draft.pending_initial_itinerary.segments[0].route.origin_label == DEFAULT_ORIGIN_LABEL
+    assert any(DEFAULT_ORIGIN_LABEL in warning for warning in draft.warnings)
+
+
+def test_chosen_candidate_is_reverified_before_planning(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    """The client returns a label, never coordinates; the server geocodes it again."""
+    timestamp = datetime(2026, 9, 2, tzinfo=UTC)
+    chosen = LocationSearchResult(
+        label="Orchard Road",
+        location=Location(lat=1.3048, lng=103.8318),
+        source="onemap_search",
+        source_timestamp=timestamp,
+    )
+    location = Mock()
+    location.search.side_effect = lambda query: (chosen,) if query == "Orchard Road" else ()
+
+    draft = make_service(planner, replanner, location=location).start_journey(
+        "Plan a safe day starting from Orchard.",
+        journey_date=date(2026, 9, 2),
+        start_label="Orchard Road",
+        idempotency_key="chosen-origin-1",
+    )
+
+    assert draft.pending_initial_itinerary is not None
+    assert draft.pending_initial_itinerary.segments[0].route.origin_label == "Orchard Road"
+    location.search.assert_any_call("Orchard Road")
 
 
 def test_start_location_prefers_one_exact_match(
@@ -1949,6 +2042,7 @@ def test_fastapi_in_progress_returns_retry_after(
             "operation": "start_journey",
             "prompt": payload["prompt"],
             "journey_date": payload["journey_date"],
+            "start_label": "",
         }
     )
     store.reserve(

@@ -21,6 +21,25 @@ class ToolUnavailable(AdaptSGError):
     """Raised when live verification cannot provide required typed data."""
 
 
+class OriginNotVerified(AdaptSGError):
+    """Raised when a start location matches no place, or several distinct ones.
+
+    Distinct from ToolUnavailable: the provider answered correctly, the query was
+    simply not specific enough. The caller may re-submit with a chosen candidate.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        query: str,
+        candidates: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.query = query
+        self.candidates = candidates
+
+
 class InvalidIdempotencyKey(AdaptSGError):
     """Raised when a state-changing request has no usable retry key."""
 
