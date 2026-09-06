@@ -105,7 +105,7 @@ def test_bedrock_parser_accepts_fenced_json_and_usage() -> None:
         }
     )
     parser = BedrockPreferenceParser(
-        settings=Settings(adaptsg_mode="live", adaptsg_use_bedrock=True),
+        settings=Settings(adaptsg_mode="live", adaptsg_bedrock_enabled=True),
         catalog=VenueCatalog(),
         client=client,
     )
@@ -122,7 +122,7 @@ def test_bedrock_parser_accepts_fenced_json_and_usage() -> None:
 
 def test_bedrock_failure_falls_back_safely() -> None:
     parser = BedrockPreferenceParser(
-        settings=Settings(adaptsg_mode="live", adaptsg_use_bedrock=True),
+        settings=Settings(adaptsg_mode="live", adaptsg_bedrock_enabled=True),
         catalog=VenueCatalog(),
         client=FakeBedrockClient(fail=True),
     )
@@ -133,7 +133,7 @@ def test_bedrock_failure_falls_back_safely() -> None:
 
 def test_bedrock_failure_can_be_strict() -> None:
     parser = BedrockPreferenceParser(
-        settings=Settings(adaptsg_mode="live", adaptsg_use_bedrock=True),
+        settings=Settings(adaptsg_mode="live", adaptsg_bedrock_enabled=True),
         catalog=VenueCatalog(),
         client=FakeBedrockClient(fail=True),
         allow_fallback=False,
