@@ -23,8 +23,8 @@ Implemented on `feature/r1-auth-provider-separation`: service construction now t
 authentication, Singapore providers and Bedrock as independent switches. Cognito ownership uses
 API Gateway's verified `sub` for both ID-token `aud` and access-token `client_id` claim shapes;
 Bedrock-disabled construction selects the deterministic parser without creating a Bedrock parser
-or runtime client. AWS deployment and two-browser verification remain acceptance steps after the
-branch is merged.
+or runtime client. The branch is merged and deployed; two-browser owner-isolation verification
+remains an operational acceptance step.
 
 ## Role 1: durable trust records
 
@@ -41,11 +41,23 @@ Acceptance criteria:
   owner-scoped.
 - `ADAPTSG_AUDIT_STORAGE_CONFIGURED=true` is set only when the durable store is actually selected.
 
+Implemented on `feature/r1-durable-trust-records`: the existing encrypted DynamoDB application
+table now stores consent, authority grants, one-use action intents and bounded per-journey audit
+chains. Journey state, idempotency completion, the audit head and the audit event share one
+conditional transaction. Durable-store construction is selected from `ADAPTSG_JOURNEYS_TABLE`,
+and claiming durable audit configuration without that table fails closed. Cold-start continuity,
+replay, retention, owner-scoped audit access and failure paths have local regression coverage.
+
 ## Roles 1 and 2: live location resolution
 
 ```text
 CONTRACT CHANGE | JourneyRequest location population in src/adaptsg/preference_parser.py or orchestration in src/adaptsg/agent.py using src/adaptsg/tools/location.py | a parsed start label currently retains the default Toa Payoh coordinates and OneMapLocationClient is not in the planning flow | roles 1 and 2 | resolve the start label through the typed location tool before routing; reject ambiguous/unverified live results; retain the fixed demo lookup | non-Toa-Payoh route test, ambiguity/failure tests and live-client mock provenance test
 ```
+
+Implemented in service orchestration: parsed origins are resolved through the selected typed
+location client before any route is calculated. The deterministic demo lookup remains fixed;
+empty, ambiguous and unverified results fail closed, while one exact match may be selected from a
+multi-result response. Numerical routing continues to come only from the routing client.
 
 ## Role 3: Cognito browser client
 
@@ -55,6 +67,6 @@ HANDOFF | role 3 | feature/static-browser-cognito | public/index.html, scripts/c
 
 The browser requests the declared `adaptsg/*` scopes and sends the access token, not the ID
 token, to API Gateway. No client secret, AWS access key or provider credential is in browser
-code. This handoff is done, but the deployed demo still cannot demonstrate the two-user isolation
-acceptance check in `docs/contracts/static-web-auth-handoff.md` — see the Role 1 identity/provider
-separation handoff above, which stays pending until its owner lands it.
+code. This handoff and the identity/provider separation are merged and deployed. The two-user
+isolation check in `docs/contracts/static-web-auth-handoff.md` remains a manual browser acceptance
+step rather than an implementation dependency.

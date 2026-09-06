@@ -401,8 +401,8 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
     @app.get("/api/v1/audit-events", response_model=tuple[AuditEvent, ...])
     def audit_events(request: Request) -> tuple[AuditEvent, ...]:
         principal = _principal(request, mode=resolved_service.auth_mode)
-        if not principal.authenticated or not principal.roles:
-            raise AuthorizationDenied("authenticated principal is required")
+        if ActorRole.SYSTEM not in principal.roles:
+            raise AuthorizationDenied("global audit enumeration is not available to user accounts")
         return resolved_service.audit.list(correlation_id=None)
 
     @app.get(

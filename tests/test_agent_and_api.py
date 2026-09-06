@@ -16,6 +16,10 @@ from adaptsg.agent import (
     AdaptSGService,
     AuthorizationPolicy,
     CapabilityResolver,
+    DynamoDBActionIntentStore,
+    DynamoDBAuditStore,
+    DynamoDBAuthorityStore,
+    DynamoDBConsentStore,
     DynamoDBJourneyStore,
     InMemoryAuditStore,
     InMemoryAuthorityStore,
@@ -40,6 +44,7 @@ from adaptsg.domain import (
     JourneyState,
     JourneyStatus,
     Location,
+    LocationSearchResult,
     MonitoringOutcome,
     ParseOutcome,
     PrincipalContext,
@@ -52,6 +57,7 @@ from adaptsg.domain import (
 )
 from adaptsg.errors import (
     AuditUnavailable,
+    AuthorityGrantRequired,
     AuthorizationDenied,
     CapabilityDisabled,
     ConsentRequired,
@@ -62,6 +68,7 @@ from adaptsg.errors import (
     NoFeasibleItinerary,
     OperationInProgress,
     ReplanLimitReached,
+    RetentionConfigurationMissing,
     StaleJourneyVersion,
     ToolUnavailable,
 )
@@ -373,6 +380,88 @@ def test_start_location_is_resolved_before_live_planning(
         idempotency_key="resolve-city-hall-1",
     )
 
+    assert draft.pending_initial_itinerary is not None
+    first_route = draft.pending_initial_itinerary.segments[0].route
+    assert first_route.origin_label == "City Hall"
+    assert first_route.origin == Location(lat=1.2931, lng=103.8520)
+
+
+def test_start_location_rejects_ambiguous_or_unverified_results(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    timestamp = datetime(2026, 9, 2, tzinfo=UTC)
+    missing = Mock()
+    missing.search.return_value = ()
+    with pytest.raises(ToolUnavailable, match="no result"):
+        make_service(planner, replanner, location=missing).start_journey(
+            "Plan a safe day starting from Orchard.",
+            journey_date=date(2026, 9, 2),
+            idempotency_key="missing-location-1",
+        )
+
+    ambiguous = Mock()
+    ambiguous.search.return_value = (
+        LocationSearchResult(
+            label="Orchard Road",
+            location=Location(lat=1.3048, lng=103.8318),
+            source="onemap_search",
+            source_timestamp=timestamp,
+        ),
+        LocationSearchResult(
+            label="Orchard Boulevard",
+            location=Location(lat=1.3020, lng=103.8239),
+            source="onemap_search",
+            source_timestamp=timestamp,
+        ),
+    )
+    with pytest.raises(ToolUnavailable, match="ambiguous"):
+        make_service(planner, replanner, location=ambiguous).start_journey(
+            "Plan a safe day starting from Orchard.",
+            journey_date=date(2026, 9, 2),
+            idempotency_key="ambiguous-location-1",
+        )
+
+    unverified = Mock()
+    unverified.search.return_value = (
+        LocationSearchResult(
+            label="Orchard",
+            location=Location(lat=1.3048, lng=103.8318),
+            source="",
+            source_timestamp=timestamp,
+        ),
+    )
+    with pytest.raises(ToolUnavailable, match="unverified"):
+        make_service(planner, replanner, location=unverified).start_journey(
+            "Plan a safe day starting from Orchard.",
+            journey_date=date(2026, 9, 2),
+            idempotency_key="unverified-location-1",
+        )
+
+
+def test_start_location_prefers_one_exact_match(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    timestamp = datetime(2026, 9, 2, tzinfo=UTC)
+    location = Mock()
+    location.search.return_value = (
+        LocationSearchResult(
+            label="City Hall MRT",
+            location=Location(lat=1.2932, lng=103.8522),
+            source="onemap_search",
+            source_timestamp=timestamp,
+        ),
+        LocationSearchResult(
+            label="City Hall",
+            location=Location(lat=1.2931, lng=103.8520),
+            source="onemap_search",
+            source_timestamp=timestamp,
+        ),
+    )
+    draft = make_service(planner, replanner, location=location).start_journey(
+        "Plan a safe day starting from City Hall.",
+        journey_date=date(2026, 9, 2),
+        idempotency_key="exact-location-1",
+    )
     assert draft.pending_initial_itinerary is not None
     first_route = draft.pending_initial_itinerary.segments[0].route
     assert first_route.origin_label == "City Hall"
@@ -884,6 +973,403 @@ def test_dynamodb_release_contains_no_raw_key(caplog: pytest.LogCaptureFixture) 
     assert "hashed-key" not in caplog.text
 
 
+def test_dynamodb_journey_and_audit_commit_are_atomic(itinerary: Itinerary) -> None:
+    now = datetime(2026, 9, 2, tzinfo=UTC)
+    state = JourneyState(
+        status=JourneyStatus.DRAFT,
+        pending_initial_itinerary=itinerary,
+        created_at=now,
+        updated_at=now,
+        expires_at=now + timedelta(hours=24),
+    )
+    event = AuditEvent(
+        correlation_id=state.journey_id,
+        actor_role=ActorRole.SYSTEM,
+        capability=Capability.JOURNEY_WRITE,
+        transition="start_journey",
+        outcome=TransitionOutcome.ACCEPTED,
+        timestamp=now,
+        metadata={"operation": "start_journey", "version": 1},
+    )
+    client = Mock()
+    journey_store = DynamoDBJourneyStore(table_name="state", client=client)
+    audit_store = DynamoDBAuditStore(table_name="state", client=client, retention_days=90)
+
+    stored = journey_store.commit_with_audit(
+        state,
+        expected_version=None,
+        key_hash="key-hash",
+        fingerprint="fingerprint",
+        expires_epoch=int(state.expires_at.timestamp()),
+        audit=audit_store,
+        audit_event=event,
+        expected_previous_hash=None,
+    )
+
+    items = client.transact_write_items.call_args.kwargs["TransactItems"]
+    assert len(items) == 4
+    assert items[0]["Put"]["Item"]["record_type"]["S"] == "journey"
+    assert items[2]["Put"]["Item"]["record_type"]["S"] == "audit_head"
+    assert items[3]["Put"]["Item"]["record_type"]["S"] == "audit_event"
+    assert stored.event_hash is not None
+
+    client.transact_write_items.side_effect = ClientError(
+        {"Error": {"Code": "TransactionCanceledException", "Message": "audit conflict"}},
+        "TransactWriteItems",
+    )
+    with pytest.raises(AuditUnavailable):
+        journey_store.commit_with_audit(
+            state,
+            expected_version=None,
+            key_hash="other-key",
+            fingerprint="fingerprint",
+            expires_epoch=int(state.expires_at.timestamp()),
+            audit=audit_store,
+            audit_event=event,
+            expected_previous_hash=None,
+        )
+
+
+def test_dynamodb_audit_is_owner_partitioned_and_bounded() -> None:
+    correlation_id = UUID(int=1)
+    first = AuditEvent(
+        correlation_id=correlation_id,
+        actor_role=ActorRole.SYSTEM,
+        capability=Capability.JOURNEY_WRITE,
+        transition="start_journey",
+        outcome=TransitionOutcome.ACCEPTED,
+        timestamp=datetime(2026, 9, 2, 10, tzinfo=UTC),
+        metadata={"operation": "start_journey", "version": 1},
+    )
+    second = first.model_copy(
+        update={
+            "timestamp": datetime(2026, 9, 2, 11, tzinfo=UTC),
+            "transition": "approve_journey",
+        }
+    )
+    client = Mock()
+    store = DynamoDBAuditStore(table_name="state", client=client, retention_days=90)
+    stored_first, first_items = store.prepare_append(first, expected_previous_hash=None)
+    stored_second, second_items = store.prepare_append(
+        second, expected_previous_hash=stored_first.event_hash
+    )
+    client.query.return_value = {
+        "Items": [second_items[1]["Put"]["Item"], first_items[1]["Put"]["Item"]]
+    }
+
+    assert store.list(correlation_id=correlation_id) == (stored_first, stored_second)
+    query = client.query.call_args.kwargs
+    assert query["Limit"] == 100
+    assert query["ScanIndexForward"] is False
+    assert query["ExpressionAttributeValues"][":pk"]["S"] == f"AUDIT#{correlation_id}"
+    with pytest.raises(AuthorizationDenied, match="global audit"):
+        store.list()
+
+
+def test_dynamodb_audit_append_and_head_fail_closed() -> None:
+    event = AuditEvent(
+        correlation_id=UUID(int=2),
+        actor_role=ActorRole.SYSTEM,
+        capability=Capability.JOURNEY_WRITE,
+        transition="start_journey",
+        outcome=TransitionOutcome.ACCEPTED,
+        timestamp=datetime(2026, 9, 2, tzinfo=UTC),
+        metadata={"operation": "start_journey", "version": 1},
+    )
+    client = Mock()
+    store = DynamoDBAuditStore(table_name="state", client=client, retention_days=90)
+    stored = store.append(event, expected_previous_hash=None)
+    assert stored.event_hash is not None
+
+    client.get_item.return_value = {"Item": {"head_hash": {"S": stored.event_hash}}}
+    assert store.latest_hash(event.correlation_id) == stored.event_hash
+    client.get_item.return_value = {}
+    assert store.latest_hash(event.correlation_id) is None
+
+    client.transact_write_items.side_effect = ClientError(
+        {"Error": {"Code": "TransactionCanceledException", "Message": "conflict"}},
+        "TransactWriteItems",
+    )
+    with pytest.raises(AuditUnavailable, match="audit chain changed"):
+        store.append(event, expected_previous_hash=None)
+    client.transact_write_items.side_effect = ClientError(
+        {"Error": {"Code": "InternalServerError", "Message": "unavailable"}},
+        "TransactWriteItems",
+    )
+    with pytest.raises(ClientError):
+        store.append(event, expected_previous_hash=None)
+
+
+def test_dynamodb_consent_survives_cold_start_and_retains_revocation() -> None:
+    now = datetime(2026, 9, 2, tzinfo=UTC)
+    record = ConsentRecord(
+        subject="caregiver-sub",
+        policy_version="consent-v1",
+        actor="caregiver-sub",
+        purpose=ConsentPurpose.JOURNEY_PLANNING,
+        data_categories=frozenset({"journey_input", "location_routing"}),
+        granted_at=now,
+    )
+    writer_client = Mock()
+    writer = DynamoDBConsentStore(
+        table_name="state", client=writer_client, revoked_retention_days=30
+    )
+    assert writer.create(record, idempotency_key="create-consent-key") == record
+    transaction = writer_client.transact_write_items.call_args.kwargs["TransactItems"]
+    record_item = transaction[0]["Put"]["Item"]
+    current_item = transaction[1]["Put"]["Item"]
+
+    cold_client = Mock()
+    cold_client.get_item.side_effect = [
+        {"Item": record_item},
+        {"Item": current_item},
+        {"Item": record_item},
+        {"Item": current_item},
+    ]
+    cold_store = DynamoDBConsentStore(
+        table_name="state", client=cold_client, revoked_retention_days=30
+    )
+    assert cold_store.get(record.id) == record
+    assert (
+        cold_store.find_current(
+            subject=record.subject,
+            purpose=record.purpose,
+            categories=frozenset({"journey_input"}),
+            policy_version="consent-v1",
+            now=now,
+        )
+        == record
+    )
+    revoked = cold_store.revoke(record.id, expected_version=1, at=now + timedelta(hours=1))
+    assert revoked.version == 2
+    assert revoked.retention_expires_at == now + timedelta(days=30, hours=1)
+    revoke_items = cold_client.transact_write_items.call_args.kwargs["TransactItems"]
+    assert revoke_items[0]["Put"]["Item"]["expires_at"]["N"] == str(
+        int(revoked.retention_expires_at.timestamp())
+    )
+
+
+def test_dynamodb_consent_idempotency_and_failure_paths() -> None:
+    now = datetime(2026, 9, 2, tzinfo=UTC)
+    record = ConsentRecord(
+        subject="caregiver-sub",
+        policy_version="consent-v1",
+        actor="caregiver-sub",
+        purpose=ConsentPurpose.JOURNEY_PLANNING,
+        data_categories=frozenset({"journey_input"}),
+        granted_at=now,
+    )
+    seed_client = Mock()
+    seed = DynamoDBConsentStore(table_name="state", client=seed_client, revoked_retention_days=30)
+    seed.create(record, idempotency_key="same-consent-key")
+    idempotency_item = seed_client.transact_write_items.call_args.kwargs["TransactItems"][2]["Put"][
+        "Item"
+    ]
+    cancelled = ClientError(
+        {"Error": {"Code": "TransactionCanceledException", "Message": "duplicate"}},
+        "TransactWriteItems",
+    )
+
+    replay_client = Mock()
+    replay_client.transact_write_items.side_effect = cancelled
+    replay_client.get_item.return_value = {"Item": idempotency_item}
+    replay_store = DynamoDBConsentStore(
+        table_name="state", client=replay_client, revoked_retention_days=30
+    )
+    assert replay_store.create(record, idempotency_key="same-consent-key") == record
+
+    conflict_client = Mock()
+    conflict_client.transact_write_items.side_effect = cancelled
+    conflict_client.get_item.return_value = {
+        "Item": {**idempotency_item, "fingerprint": {"S": "different"}}
+    }
+    with pytest.raises(IdempotencyConflict, match="consent idempotency"):
+        DynamoDBConsentStore(
+            table_name="state", client=conflict_client, revoked_retention_days=30
+        ).create(record, idempotency_key="same-consent-key")
+
+    pending_client = Mock()
+    pending_client.transact_write_items.side_effect = cancelled
+    pending_client.get_item.return_value = {}
+    with pytest.raises(OperationInProgress, match="being completed"):
+        DynamoDBConsentStore(
+            table_name="state", client=pending_client, revoked_retention_days=30
+        ).create(record, idempotency_key="same-consent-key")
+
+    unavailable_client = Mock()
+    unavailable_client.transact_write_items.side_effect = ClientError(
+        {"Error": {"Code": "InternalServerError", "Message": "unavailable"}},
+        "TransactWriteItems",
+    )
+    with pytest.raises(ClientError):
+        DynamoDBConsentStore(
+            table_name="state", client=unavailable_client, revoked_retention_days=30
+        ).create(record, idempotency_key="same-consent-key")
+
+    empty_client = Mock()
+    empty_client.get_item.return_value = {}
+    empty_store = DynamoDBConsentStore(
+        table_name="state", client=empty_client, revoked_retention_days=30
+    )
+    with pytest.raises(ConsentRequired, match="not found"):
+        empty_store.get(record.id)
+    assert (
+        empty_store.find_current(
+            subject=record.subject,
+            purpose=record.purpose,
+            categories=record.data_categories,
+            policy_version=record.policy_version,
+            now=now,
+        )
+        is None
+    )
+
+
+def test_dynamodb_authority_grant_survives_cold_start() -> None:
+    now = datetime(2026, 9, 2, tzinfo=UTC)
+    grant = AuthorityGrant(
+        subject="traveller-sub",
+        delegate="caregiver-sub",
+        capabilities=frozenset({Capability.JOURNEY_READ}),
+        issuer="traveller-sub",
+        valid_from=now,
+        valid_until=now + timedelta(days=1),
+    )
+    writer_client = Mock()
+    DynamoDBAuthorityStore(table_name="state", client=writer_client).put(grant)
+    put = writer_client.put_item.call_args.kwargs
+    stored_item = put["Item"]
+    assert "attribute_not_exists(pk)" in put["ConditionExpression"]
+    cold_client = Mock()
+    cold_client.get_item.return_value = {"Item": stored_item}
+    assert (
+        DynamoDBAuthorityStore(table_name="state", client=cold_client).get(
+            grant.subject, grant.delegate
+        )
+        == grant
+    )
+
+
+def test_dynamodb_authority_conflicts_and_revocation_are_conditional() -> None:
+    now = datetime(2026, 9, 2, tzinfo=UTC)
+    grant = AuthorityGrant(
+        subject="traveller-sub",
+        delegate="caregiver-sub",
+        capabilities=frozenset({Capability.JOURNEY_READ}),
+        issuer="traveller-sub",
+        valid_from=now,
+        valid_until=now + timedelta(days=1),
+    )
+    conflict_client = Mock()
+    conflict_client.put_item.side_effect = ClientError(
+        {"Error": {"Code": "ConditionalCheckFailedException", "Message": "active"}},
+        "PutItem",
+    )
+    with pytest.raises(IdempotencyConflict, match="active authority grant"):
+        DynamoDBAuthorityStore(table_name="state", client=conflict_client).put(grant)
+
+    empty_client = Mock()
+    empty_client.get_item.return_value = {}
+    with pytest.raises(AuthorityGrantRequired):
+        DynamoDBAuthorityStore(table_name="state", client=empty_client).get(
+            grant.subject, grant.delegate
+        )
+
+    seed_client = Mock()
+    seed_store = DynamoDBAuthorityStore(table_name="state", client=seed_client)
+    seed_store.put(grant)
+    item = seed_client.put_item.call_args.kwargs["Item"]
+    revoke_client = Mock()
+    revoke_client.get_item.return_value = {"Item": item}
+    revoked = DynamoDBAuthorityStore(table_name="state", client=revoke_client).revoke(
+        grant.subject, grant.delegate, at=now + timedelta(hours=1)
+    )
+    assert revoked.revoked_at == now + timedelta(hours=1)
+    assert "revoked_at" in revoke_client.put_item.call_args.kwargs["Item"]
+
+    revoked_item = revoke_client.put_item.call_args.kwargs["Item"]
+    revoke_client.get_item.return_value = {"Item": revoked_item}
+    assert (
+        DynamoDBAuthorityStore(table_name="state", client=revoke_client).revoke(
+            grant.subject, grant.delegate, at=now + timedelta(hours=2)
+        )
+        == revoked
+    )
+
+
+def test_dynamodb_action_intent_survives_cold_start_and_is_one_use() -> None:
+    now = datetime(2026, 9, 2, tzinfo=UTC)
+    principal = PrincipalContext(
+        principal_id="caregiver-sub",
+        account_id="caregiver-sub",
+        roles=frozenset({ActorRole.CAREGIVER}),
+        authenticated=True,
+    )
+    writer_client = Mock()
+    writer = ActionIntentService(
+        clock=lambda: now,
+        store=DynamoDBActionIntentStore(table_name="state", client=writer_client),
+    )
+    intent = writer.issue(
+        principal=principal,
+        target="journey-1",
+        capability=Capability.JOURNEY_WRITE,
+        payload={"decision": "approve"},
+        expected_state_version=1,
+    )
+    stored_item = writer_client.put_item.call_args.kwargs["Item"]
+
+    cold_client = Mock()
+    cold_client.get_item.return_value = {"Item": stored_item}
+    cold = ActionIntentService(
+        clock=lambda: now + timedelta(seconds=1),
+        store=DynamoDBActionIntentStore(table_name="state", client=cold_client),
+    )
+    assert (
+        cold.consume(
+            intent.id,
+            principal=principal,
+            payload={"decision": "approve"},
+            state_version=1,
+            result="accepted",
+        )
+        == "accepted"
+    )
+    update = cold_client.update_item.call_args.kwargs
+    assert update["ConditionExpression"] == "attribute_not_exists(used_at)"
+    assert "used_at" in update["UpdateExpression"]
+
+    used = intent.model_copy(update={"used_at": now + timedelta(seconds=1)})
+    assert used.used_at is not None
+    used_item = {
+        **stored_item,
+        "intent_json": {"S": used.model_dump_json()},
+        "used_at": {"S": used.used_at.isoformat()},
+        "replay_key": {"S": intent.nonce + ":" + intent.payload_hash},
+        "result_json": {"S": json.dumps("accepted")},
+    }
+    replay_client = Mock()
+    replay_client.get_item.side_effect = [{"Item": used_item}, {"Item": used_item}]
+    replay_client.update_item.side_effect = ClientError(
+        {"Error": {"Code": "ConditionalCheckFailedException", "Message": "already used"}},
+        "UpdateItem",
+    )
+    replay = ActionIntentService(
+        clock=lambda: now + timedelta(seconds=2),
+        store=DynamoDBActionIntentStore(table_name="state", client=replay_client),
+    )
+    assert (
+        replay.consume(
+            intent.id,
+            principal=principal,
+            payload={"decision": "approve"},
+            state_version=1,
+            result="accepted",
+        )
+        == "accepted"
+    )
+
+
 def test_service_runs_bounded_plan_graph(
     planner: JourneyPlanner, replanner: JourneyReplanner
 ) -> None:
@@ -1195,6 +1681,9 @@ def test_api_consent_status_and_owner_audit(
     events = client.get(f"/api/journeys/{journey_id}/audit-events")
     assert events.status_code == 200
     assert events.json()[0]["metadata"]["operation"] == "start_journey"
+    global_events = client.get("/api/v1/audit-events")
+    assert global_events.status_code == 403
+    assert global_events.json()["code"] == "authorization_denied"
 
 
 def test_fastapi_stateful_approval_replan_and_static_page(
@@ -1451,4 +1940,19 @@ def test_build_service_selects_dynamodb_when_configured(
     monkeypatch.setattr("adaptsg.agent.boto3.Session", Mock(return_value=session))
     service = build_service(Settings(adaptsg_journeys_table="journeys"))
     assert service.storage_mode == "dynamodb"
+    assert isinstance(service.audit, DynamoDBAuditStore)
+    assert isinstance(service.consent, DynamoDBConsentStore)
+    assert isinstance(service.authority, DynamoDBAuthorityStore)
+    assert service.intents.storage_mode == "dynamodb"
     session.client.assert_called_once_with("dynamodb")
+
+
+def test_build_service_rejects_durable_audit_claim_without_table() -> None:
+    with pytest.raises(RetentionConfigurationMissing, match="ADAPTSG_JOURNEYS_TABLE"):
+        build_service(
+            Settings(
+                adaptsg_mode="demo",
+                adaptsg_audit_storage_configured=True,
+                adaptsg_journeys_table=None,
+            )
+        )
