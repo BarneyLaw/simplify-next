@@ -90,7 +90,9 @@ img{max-width:100%}
 .brand .mark{height:34px}
 .hero .mark{height:104px}
 .working .mark{height:76px;margin:0 auto}
+.auth-intro .mark{height:78px}
 .topnav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.trip-navigation{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .pill{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;white-space:nowrap;
   border-radius:var(--r-pill);font-size:16px;font-weight:var(--w-ui);text-decoration:none;
   border:1px solid transparent}
@@ -249,6 +251,30 @@ details.tech .ev{padding:0 16px 16px;border-top:1px solid var(--fog);padding-top
   padding:var(--section) 0 40px}
 .hero h1{font-size:clamp(40px,6vw,72px);font-weight:var(--w-display);letter-spacing:-.011em;line-height:1}
 .hero .lede{font-size:22px;font-weight:var(--w-ui);color:var(--muted);line-height:1.4}
+.auth-shell{width:100%;max-width:1040px;margin:24px auto 0;display:grid;
+  grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr);gap:56px;align-items:center}
+.auth-intro{display:flex;flex-direction:column;align-items:flex-start;gap:20px;padding:24px 0}
+.auth-intro h1{max-width:700px;font-size:clamp(42px,5vw,64px);font-weight:var(--w-display);
+  letter-spacing:-.018em;line-height:1.02}
+/* This heading receives focus only so a screen reader announces the signed-out state.
+   It is not an interactive control and cannot be reached by Tab, so do not paint the
+   browser's control-style focus box around it. */
+.auth-intro h1:focus{outline:none}
+.auth-lede{max-width:620px;font-size:20px;color:var(--muted);line-height:1.5}
+.auth-promises{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;width:100%;
+  padding-top:8px}
+.auth-promises li{border-top:1px solid var(--fog);padding-top:14px;display:flex;
+  flex-direction:column;gap:5px}
+.auth-promises .step{font-size:13px;font-weight:var(--w-head);letter-spacing:.08em;color:var(--muted)}
+.auth-promises strong{font-size:16px;line-height:1.35}
+.auth-panel{border:1px solid var(--fog);border-radius:var(--r-lg);background:var(--mist);
+  padding:36px;display:flex;flex-direction:column;gap:20px}
+.auth-panel h2{font-size:30px;line-height:1.15;letter-spacing:-.009em}
+.auth-panel .note{font-size:17px}
+.auth-actions{flex-direction:column;align-items:stretch}
+.auth-actions .btn{width:100%}
+.auth-fineprint{border-top:1px solid var(--ash);padding-top:16px;font-size:14px;
+  color:var(--muted);line-height:1.5}
 .prompt{border:1px solid var(--fog);border-radius:var(--r-lg);padding:24px;background:var(--canvas);
   display:flex;flex-direction:column;gap:12px}
 .prompt label{font-weight:var(--w-mid);font-size:17px}
@@ -265,6 +291,8 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   .work{grid-template-columns:minmax(0,1fr)}
   .map{position:static}
   .mapcanvas{height:260px}
+  .auth-shell{grid-template-columns:minmax(0,1fr);gap:24px;max-width:760px;margin-top:0}
+  .auth-intro{padding-bottom:0}
 }
 @media (max-width:560px){
   body{font-size:17px}
@@ -272,6 +300,15 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   .topbar-inner{padding:10px 12px}
   .shell{padding:0 16px;gap:24px}
   .hero{padding:40px 0 24px}
+  .auth-intro{gap:16px;padding-top:12px}
+  .auth-intro .mark{height:62px}
+  .auth-intro h1{font-size:38px}
+  .auth-lede{font-size:18px}
+  .auth-promises{grid-template-columns:minmax(0,1fr);gap:8px}
+  .auth-promises li{display:grid;grid-template-columns:36px minmax(0,1fr);align-items:baseline;
+    padding-top:10px}
+  .auth-panel{padding:24px}
+  .auth-panel h2{font-size:26px}
   .prompt{padding:18px}
   .band{padding:16px 18px}
   .band h2{font-size:22px}
@@ -305,8 +342,10 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
     <div class="topbar-inner">
       <div class="brand"><img class="mark" src="/mascot-128.png" width="128" height="88" alt=""><span class="word">AdaptSG</span></div>
       <nav class="topnav" aria-label="AdaptSG">
-        <a class="pill go" href="#" id="new-trip">New trip</a>
-        <span class="pill off" aria-disabled="true">Past trips &mdash; not available yet</span>
+        <span class="trip-navigation" id="trip-navigation">
+          <a class="pill go" href="#" id="new-trip">New trip</a>
+          <span class="pill off" aria-disabled="true">Past trips &mdash; not available yet</span>
+        </span>
         <a class="pill go" href="#" id="sign-out" hidden>Sign out</a>
       </nav>
     </div>
@@ -457,16 +496,28 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       </div>
 
       <div class="work single view" id="view-signedout" hidden>
-        <main style="max-width:640px;margin:0 auto;width:100%">
-          <div class="pagehead">
-            <p class="eyebrow">Sign in</p>
-            <h1 id="signedout-title" tabindex="-1">Sign in to plan a day</h1>
-          </div>
-          <p class="note">AdaptSG needs a signed-in session so your plan and any changes to it stay yours alone.</p>
-          <div class="actions">
-            <button type="button" id="sign-in" class="btn primary">Sign in</button>
-            <button type="button" id="signup" class="btn ghost" hidden>Create account</button>
-          </div>
+        <main class="auth-shell">
+          <section class="auth-intro" aria-labelledby="signedout-title">
+            <img class="mark" src="/mascot-512.png" width="512" height="352" alt="">
+            <p class="eyebrow">Plan with confidence</p>
+            <h1 id="signedout-title" tabindex="-1">A safer day out starts with your must-haves.</h1>
+            <p class="auth-lede">AdaptSG plans around mobility, rest, time and budget constraints, then checks every itinerary before showing it to you.</p>
+            <ul class="auth-promises" aria-label="How AdaptSG plans">
+              <li><span class="step">01</span><strong>Tell us what the day must respect</strong></li>
+              <li><span class="step">02</span><strong>Review a checked itinerary</strong></li>
+              <li><span class="step">03</span><strong>Approve changes before they happen</strong></li>
+            </ul>
+          </section>
+          <section class="auth-panel" aria-labelledby="auth-panel-title">
+            <p class="eyebrow">Secure access</p>
+            <h2 id="auth-panel-title">Sign in to AdaptSG</h2>
+            <p class="note">Your account keeps each journey and its change history associated with you. You will continue to the secure sign-in page.</p>
+            <div class="actions auth-actions">
+              <button type="button" id="sign-in" class="btn primary">Sign in</button>
+              <button type="button" id="signup" class="btn ghost" hidden>Create account</button>
+            </div>
+            <p class="auth-fineprint">AdaptSG does not book, purchase or pay for anything. A caregiver must approve changes above the configured cost threshold.</p>
+          </section>
         </main>
       </div>
     </div>
@@ -783,7 +834,10 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   }
 
   function updateHeaderAuthControls() {
-    if ($('sign-out')) $('sign-out').hidden = !(cfg && cfg.auth && accessToken);
+    const authEnabled = Boolean(cfg && cfg.auth);
+    const signedIn = Boolean(authEnabled && accessToken);
+    if ($('trip-navigation')) $('trip-navigation').hidden = authEnabled && !signedIn;
+    if ($('sign-out')) $('sign-out').hidden = !signedIn;
   }
 
   function configureAuthUI() {
@@ -795,6 +849,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   // or render a generic transport alert on top of it.
   function enterSignedOutState() {
     updateHeaderAuthControls();
+    $('mode-banner').hidden = true;
     activateView('view-signedout', () => { if ($('signedout-title')) $('signedout-title').focus(); });
   }
 
@@ -1385,6 +1440,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
 
   function bootLanding() {
     updateHeaderAuthControls();
+    $('mode-banner').hidden = false;
     activateView('view-landing', null);
     read('/api/health').then((data) => {
       runtimeMode = data.mode;
