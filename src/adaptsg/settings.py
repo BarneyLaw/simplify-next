@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -66,6 +66,23 @@ class Settings(BaseSettings):
     adaptsg_cost_model_version: str = ""
     adaptsg_input_token_tariff_sgd: float | None = Field(default=None, ge=0)
     adaptsg_output_token_tariff_sgd: float | None = Field(default=None, ge=0)
+
+    # A blank .env entry arrives as "" rather than as an absent key, which no numeric type can
+    # parse. These four settings ship blank in .env.example because they stay unset until the
+    # production policy values exist, so treat a blank as unset and let the live-mode readiness
+    # gate report them as missing instead of crashing the app at import time.
+    @field_validator(
+        "adaptsg_audit_retention_days",
+        "adaptsg_revoked_consent_retention_days",
+        "adaptsg_input_token_tariff_sgd",
+        "adaptsg_output_token_tariff_sgd",
+        mode="before",
+    )
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 @lru_cache(maxsize=1)
