@@ -1686,6 +1686,38 @@ def test_api_consent_status_and_owner_audit(
     assert global_events.json()["code"] == "authorization_denied"
 
 
+def test_inactive_consent_status_exposes_current_contract(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    service = make_service(planner, replanner)
+    service.consent_policy_version = "consent-v1"
+    service.consent_categories = frozenset(
+        {
+            "journey_input",
+            "mobility_accessibility",
+            "location_routing",
+            "provider_processing",
+        }
+    )
+    client = TestClient(create_app(service))
+
+    response = client.get("/api/v1/consents/journey-planning/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {key: payload[key] for key in ("active", "policy_version", "consent_id")} == {
+        "active": False,
+        "policy_version": "consent-v1",
+        "consent_id": None,
+    }
+    assert set(payload["categories"]) == {
+        "journey_input",
+        "location_routing",
+        "mobility_accessibility",
+        "provider_processing",
+    }
+
+
 def test_fastapi_stateful_approval_replan_and_static_page(
     planner: JourneyPlanner,
     replanner: JourneyReplanner,
