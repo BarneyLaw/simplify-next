@@ -220,6 +220,8 @@ await test("a 404 for /runtime-config.json falls back to the local no-auth demo 
   assert(context.cfg.apiBaseUrl === "/api", "apiBaseUrl must fall back to /api");
   assert(context.document.getElementById("view-landing").hidden === false, "the landing view must show");
   assert(context.document.getElementById("view-signedout").hidden === true, "sign-in must be skipped entirely");
+  assert(context.document.getElementById("trip-navigation").hidden === false, "local demo navigation must remain available");
+  assert(context.document.getElementById("mode-banner").hidden === false, "the planning view must show provenance");
   assert(fetchLog.length === 2, "the fallback must still be followed by the ordinary health check");
 });
 
@@ -258,6 +260,9 @@ await test("sign-in and sign-up redirect with correct params and distinct PKCE m
   const config = makeConfig();
   const { context, sessionStorage } = await runScenario({ fetchResponses: [jsonResponse(200, config)] });
   assert(context.document.getElementById("view-signedout").hidden === false, "no session must land signed-out");
+  assert(context.document.getElementById("trip-navigation").hidden === true, "signed-out users must not see journey navigation");
+  assert(context.document.getElementById("sign-out").hidden === true, "signed-out users must not see sign out");
+  assert(context.document.getElementById("mode-banner").hidden === true, "signed-out users must not see unresolved provenance");
 
   await context.beginSignIn("signin");
   const firstVerifier = sessionStorage.getItem("adaptsg.pkce.verifier");

@@ -99,6 +99,23 @@ require(
     + ".band, .btn all set one) beats the UA rule and every view renders at once",
 );
 
+require(
+  /id="trip-navigation"/.test(markup)
+    && /\$\(['"]trip-navigation['"]\)\.hidden\s*=\s*authEnabled\s*&&\s*!signedIn/.test(script),
+  "journey navigation must be hidden while Cognito is enabled and the user is signed out",
+);
+
+require(
+  /\.auth-intro h1:focus\s*\{\s*outline\s*:\s*none\s*\}/.test(styles),
+  "the non-interactive signed-out heading must not paint a control-style focus outline",
+);
+
+require(
+  /function enterSignedOutState\(\)[\s\S]*?\$\(['"]mode-banner['"]\)\.hidden\s*=\s*true/.test(script)
+    && /function bootLanding\(\)[\s\S]*?\$\(['"]mode-banner['"]\)\.hidden\s*=\s*false/.test(script),
+  "the provenance banner must be shown with authenticated planning data, not unresolved on login",
+);
+
 // A rule inside @media carries no extra specificity, so a base rule for the same selector
 // placed after the block wins at every viewport. That is how the mobile top bar went dead.
 const mediaRanges = [...styles.matchAll(/@media[^{]*\{[\s\S]*?\n\}/g)]
