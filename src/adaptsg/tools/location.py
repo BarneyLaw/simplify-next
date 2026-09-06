@@ -10,6 +10,7 @@ import httpx
 from adaptsg.domain import Location, LocationSearchResult, ToolResult
 from adaptsg.errors import ToolUnavailable
 from adaptsg.tools.freshness import FreshnessKind, failed_result, successful_result
+from adaptsg.tools.origin import DEFAULT_ORIGIN_LABEL, DEFAULT_ORIGIN_LOCATION
 
 
 class LocationClient(Protocol):
@@ -22,6 +23,7 @@ class DemoLocationClient:
     _locations: ClassVar[dict[str, Location]] = {
         "toa payoh": Location(lat=1.3323, lng=103.8474),
         "city hall": Location(lat=1.2931, lng=103.8520),
+        DEFAULT_ORIGIN_LABEL.casefold(): DEFAULT_ORIGIN_LOCATION,
     }
 
     def search(self, query: str) -> tuple[LocationSearchResult, ...]:
