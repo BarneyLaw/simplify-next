@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     adaptsg_log_level: str = "INFO"
     aws_region: str = "us-east-1"
     aws_profile: str | None = None
-    bedrock_model_id: str = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    bedrock_region: str | None = None
+    bedrock_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     bedrock_max_tokens: int = Field(default=1_200, ge=128, le=4_096)
     adaptsg_bedrock_enabled: bool = Field(
         default=False,
