@@ -432,3 +432,51 @@ def test_live_environment_translates_malformed_train_alerts(catalog: VenueCatalo
             lta_account_key="lta-key",
             client=client,
         ).current()
+
+
+def test_demo_environment_result_carries_fixture_provenance() -> None:
+    result = DemoEnvironmentClient(weather_summary="Rain", psi=55).current_result()
+    assert result.payload is not None
+    assert result.payload.weather_summary == "Rain"
+    assert result.source.startswith("demo_")
+
+
+def test_live_environment_result_reports_failure_without_raising(catalog: VenueCatalog) -> None:
+    result = LiveEnvironmentClient(catalog=catalog, lta_account_key="").current_result()
+    assert result.payload is None
+    assert result.error_code == "environment_unavailable"
+
+
+def test_live_environment_get_requires_a_client(catalog: VenueCatalog) -> None:
+    client = LiveEnvironmentClient(catalog=catalog, lta_account_key="lta-key")
+    with pytest.raises(ToolUnavailable, match="unavailable"):
+        client._get("https://example.invalid", {})
+
+
+def test_train_disruptions_rejects_a_non_integer_status_in_the_current_shape() -> None:
+    with pytest.raises(ValueError, match="invalid status"):
+        LiveEnvironmentClient._train_disruptions({"value": {"Status": "not-a-number"}})
+
+
+def test_train_disruptions_rejects_non_list_affected_segments() -> None:
+    with pytest.raises(ValueError, match="invalid affected segments"):
+        LiveEnvironmentClient._train_disruptions(
+            {"value": {"Status": 2, "AffectedSegments": "NSL"}}
+        )
+
+
+def test_train_disruptions_labels_mixed_segment_shapes_in_the_current_form() -> None:
+    labels = LiveEnvironmentClient._train_disruptions(
+        {"value": {"Status": 2, "AffectedSegments": [{"Route": "DTL"}, "raw-label"]}}
+    )
+    assert labels == frozenset({"DTL", "raw-label"})
+
+
+def test_train_disruptions_rejects_an_invalid_value_shape() -> None:
+    with pytest.raises(ValueError, match="invalid value list"):
+        LiveEnvironmentClient._train_disruptions({"value": "not-a-list-or-dict"})
+
+
+def test_train_disruptions_rejects_a_non_object_record_in_the_legacy_shape() -> None:
+    with pytest.raises(ValueError, match="invalid record"):
+        LiveEnvironmentClient._train_disruptions({"value": ["not-a-record"]})
