@@ -132,6 +132,34 @@ def test_bedrock_parser_accepts_fenced_json_and_usage() -> None:
     assert "only when the user explicitly says must" in system_prompt
 
 
+def test_bedrock_parser_preserves_explicit_qualified_start_label() -> None:
+    client = FakeBedrockClient(
+        {
+            "output": {
+                "message": {
+                    "content": [
+                        {"text": '{"start_label":"Toa Payoh","max_walking_distance_m":400}'}
+                    ]
+                }
+            },
+            "usage": {"inputTokens": 100, "outputTokens": 30},
+        }
+    )
+    parser = BedrockPreferenceParser(
+        settings=Settings(adaptsg_mode="live", adaptsg_bedrock_enabled=True),
+        catalog=VenueCatalog(),
+        client=client,
+    )
+
+    outcome = parser.parse(
+        "Plan a day starting from Toa Payoh MRT Station (NS19).",
+        journey_date=date(2026, 9, 8),
+    )
+
+    assert outcome.source.startswith("bedrock:")
+    assert outcome.request.start_label == "Toa Payoh MRT Station (NS19)"
+
+
 def test_bedrock_failure_falls_back_safely() -> None:
     parser = BedrockPreferenceParser(
         settings=Settings(adaptsg_mode="live", adaptsg_bedrock_enabled=True),

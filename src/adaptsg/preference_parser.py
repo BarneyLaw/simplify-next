@@ -159,12 +159,16 @@ class DeterministicPreferenceParser:
 
     @staticmethod
     def _start_label(prompt: str) -> str:
+        return DeterministicPreferenceParser._explicit_start_label(prompt) or "Toa Payoh"
+
+    @staticmethod
+    def _explicit_start_label(prompt: str) -> str | None:
         match = re.search(
             r"(?:starting|start)\s+(?:from|at)\s+([A-Za-z0-9 &'()/-]+?)(?:[,.]|$)",
             prompt,
             flags=re.IGNORECASE,
         )
-        return match.group(1).strip() if match else "Toa Payoh"
+        return match.group(1).strip() if match else None
 
     @staticmethod
     def _time_range(prompt: str) -> tuple[time, time]:
@@ -233,6 +237,9 @@ class BedrockPreferenceParser:
             content = response["output"]["message"]["content"]
             text = next(item["text"] for item in content if "text" in item)
             extraction = ConstraintExtraction.model_validate_json(self._clean_json(text))
+            explicit_start_label = self.fallback._explicit_start_label(prompt)
+            if explicit_start_label is not None:
+                extraction = extraction.model_copy(update={"start_label": explicit_start_label})
             usage = response.get("usage", {})
             return ParseOutcome(
                 request=extraction.to_request(journey_date),
