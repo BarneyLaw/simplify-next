@@ -24,3 +24,39 @@ def test_bedrock_switch_accepts_deployed_and_legacy_environment_names(
     monkeypatch.delenv("ADAPTSG_BEDROCK_ENABLED")
     monkeypatch.setenv("ADAPTSG_USE_BEDROCK", "true")
     assert Settings(_env_file=None).adaptsg_bedrock_enabled
+
+
+def test_blank_optional_numeric_settings_load_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """.env.example ships these blank, so a copied .env must not fail validation."""
+    for name in BLANK_OPTIONAL_NUMERIC_VARS:
+        monkeypatch.setenv(name, "")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.adaptsg_audit_retention_days is None
+    assert settings.adaptsg_revoked_consent_retention_days is None
+    assert settings.adaptsg_input_token_tariff_sgd is None
+    assert settings.adaptsg_output_token_tariff_sgd is None
+
+
+def test_populated_optional_numeric_settings_still_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ADAPTSG_AUDIT_RETENTION_DAYS", "90")
+    monkeypatch.setenv("ADAPTSG_REVOKED_CONSENT_RETENTION_DAYS", "30")
+    monkeypatch.setenv("ADAPTSG_INPUT_TOKEN_TARIFF_SGD", "0.0011")
+    monkeypatch.setenv("ADAPTSG_OUTPUT_TOKEN_TARIFF_SGD", "0.0055")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.adaptsg_audit_retention_days == 90
+    assert settings.adaptsg_revoked_consent_retention_days == 30
+    assert settings.adaptsg_input_token_tariff_sgd == pytest.approx(0.0011)
+    assert settings.adaptsg_output_token_tariff_sgd == pytest.approx(0.0055)
+
+
+def test_out_of_range_optional_numeric_settings_still_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ADAPTSG_AUDIT_RETENTION_DAYS", "0")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

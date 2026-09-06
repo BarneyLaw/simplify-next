@@ -1,18 +1,12 @@
-import json
 from datetime import date, time
 from typing import Any
 
-import httpx
 import pytest
 from botocore.exceptions import ClientError
-from pydantic import ValidationError
 
-from adaptsg.agent import build_service
 from adaptsg.preference_parser import (
     BedrockPreferenceParser,
     DeterministicPreferenceParser,
-    LMStudioPreferenceParser,
-    clean_json,
 )
 from adaptsg.settings import Settings
 from adaptsg.tools.catalog import VenueCatalog
@@ -29,34 +23,6 @@ class FakeBedrockClient:
         if self.fail:
             raise ClientError({"Error": {"Code": "Denied", "Message": "no"}}, "Converse")
         return self.response
-
-
-def lmstudio_client(
-    requests: list[httpx.Request],
-    *,
-    content: str | None = None,
-    usage: dict[str, int] | None = None,
-    status_code: int = 200,
-) -> httpx.Client:
-    """Record every outbound call and reply with one LM Studio chat completion."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        if status_code != 200:
-            return httpx.Response(status_code)
-        return httpx.Response(
-            status_code,
-            json={
-                "choices": [{"message": {"role": "assistant", "content": content}}],
-                "usage": usage or {},
-            },
-        )
-
-    return httpx.Client(transport=httpx.MockTransport(handler))
-
-
-def lmstudio_settings(**overrides: Any) -> Settings:
-    return Settings(adaptsg_mode="live", adaptsg_llm_provider="lmstudio", **overrides)
 
 
 def test_deterministic_parser_extracts_hard_and_soft_constraints() -> None:
@@ -190,7 +156,7 @@ def test_live_mode_does_not_call_bedrock_without_explicit_opt_in() -> None:
 
 def test_clean_json_rejects_non_json() -> None:
     with pytest.raises(ValueError, match="did not contain"):
-        clean_json("not structured")
+        BedrockPreferenceParser._clean_json("not structured")
 
 
 def test_demo_mode_never_calls_bedrock() -> None:
@@ -202,121 +168,3 @@ def test_demo_mode_never_calls_bedrock() -> None:
     )
     parser.parse("Plan it", journey_date=date(2026, 9, 2))
     assert client.calls == []
-
-
-def test_lmstudio_parser_reads_openai_style_response() -> None:
-    requests: list[httpx.Request] = []
-    parser = LMStudioPreferenceParser(
-        settings=lmstudio_settings(lmstudio_model_id="qwen2.5-7b-instruct"),
-        catalog=VenueCatalog(),
-        client=lmstudio_client(
-            requests,
-            content='```json\n{"start_label":"Bishan","max_walking_distance_m":300}\n```',
-            usage={"prompt_tokens": 210, "completion_tokens": 35},
-        ),
-    )
-    outcome = parser.parse("Plan it", journey_date=date(2026, 9, 2))
-
-    assert outcome.source == "lmstudio:qwen2.5-7b-instruct"
-    assert outcome.request.start_label == "Bishan"
-    assert outcome.request.hard.max_walking_distance_m == 300
-    assert outcome.token_usage.input_tokens == 210
-    assert outcome.token_usage.output_tokens == 35
-
-    request = requests[0]
-    assert str(request.url) == "http://localhost:1234/v1/chat/completions"
-    body = json.loads(request.content)
-    assert body["model"] == "qwen2.5-7b-instruct"
-    assert body["temperature"] == 0
-    assert body["messages"][1] == {"role": "user", "content": "Plan it"}
-    system_prompt = body["messages"][0]["content"]
-    assert "would like to visit" in system_prompt
-    assert "only when the user explicitly says must" in system_prompt
-
-
-def test_lmstudio_reports_zero_usage_when_the_server_omits_it() -> None:
-    parser = LMStudioPreferenceParser(
-        settings=lmstudio_settings(),
-        catalog=VenueCatalog(),
-        client=lmstudio_client([], content='{"start_label":"Bishan"}'),
-    )
-    outcome = parser.parse("Plan it", journey_date=date(2026, 9, 2))
-    assert outcome.token_usage.input_tokens == 0
-    assert outcome.token_usage.output_tokens == 0
-
-
-def test_lmstudio_malformed_output_falls_back_safely() -> None:
-    parser = LMStudioPreferenceParser(
-        settings=lmstudio_settings(),
-        catalog=VenueCatalog(),
-        client=lmstudio_client([], content="Sure! I can help you plan that trip."),
-    )
-    outcome = parser.parse("Wheelchair, max walking 350 m", journey_date=date(2026, 9, 2))
-    assert outcome.source == "deterministic_fallback_v1"
-    assert "failed" in outcome.warnings[0].casefold()
-    assert outcome.request.hard.max_walking_distance_m == 350
-
-
-def test_lmstudio_out_of_range_values_fall_back_safely() -> None:
-    parser = LMStudioPreferenceParser(
-        settings=lmstudio_settings(),
-        catalog=VenueCatalog(),
-        client=lmstudio_client([], content='{"max_walking_distance_m": 99999}'),
-    )
-    outcome = parser.parse("Plan it", journey_date=date(2026, 9, 2))
-    assert outcome.source == "deterministic_fallback_v1"
-
-
-def test_lmstudio_server_error_falls_back_safely() -> None:
-    parser = LMStudioPreferenceParser(
-        settings=lmstudio_settings(),
-        catalog=VenueCatalog(),
-        client=lmstudio_client([], status_code=500),
-    )
-    outcome = parser.parse("Plan it", journey_date=date(2026, 9, 2))
-    assert outcome.source == "deterministic_fallback_v1"
-    assert "failed" in outcome.warnings[0].casefold()
-
-
-def test_lmstudio_failure_can_be_strict() -> None:
-    parser = LMStudioPreferenceParser(
-        settings=lmstudio_settings(),
-        catalog=VenueCatalog(),
-        client=lmstudio_client([], status_code=500),
-        allow_fallback=False,
-    )
-    with pytest.raises(httpx.HTTPStatusError):
-        parser.parse("Plan it", journey_date=date(2026, 9, 2))
-
-
-def test_lmstudio_demo_mode_never_calls_the_local_server() -> None:
-    requests: list[httpx.Request] = []
-    parser = LMStudioPreferenceParser(
-        settings=Settings(adaptsg_mode="demo", adaptsg_llm_provider="lmstudio"),
-        catalog=VenueCatalog(),
-        client=lmstudio_client(requests, content='{"start_label":"Bishan"}'),
-    )
-    outcome = parser.parse("Plan it", journey_date=date(2026, 9, 2))
-    assert outcome.source == "deterministic_fallback_v1"
-    assert requests == []
-
-
-def test_lmstudio_builds_its_own_client_when_none_is_injected() -> None:
-    parser = LMStudioPreferenceParser(settings=lmstudio_settings(), catalog=VenueCatalog())
-    assert parser._http_client().timeout.read == 60
-
-
-def test_lmstudio_token_budget_is_bounded_but_fits_reasoning_models() -> None:
-    assert lmstudio_settings(lmstudio_max_tokens=32_768).lmstudio_max_tokens == 32_768
-    with pytest.raises(ValidationError):
-        lmstudio_settings(lmstudio_max_tokens=32_769)
-
-
-def test_build_service_defaults_to_the_bedrock_parser() -> None:
-    service = build_service(Settings(adaptsg_mode="demo"))
-    assert isinstance(service.parser, BedrockPreferenceParser)
-
-
-def test_build_service_selects_the_lmstudio_parser() -> None:
-    service = build_service(Settings(adaptsg_mode="demo", adaptsg_llm_provider="lmstudio"))
-    assert isinstance(service.parser, LMStudioPreferenceParser)

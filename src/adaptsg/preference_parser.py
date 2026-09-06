@@ -1,4 +1,4 @@
-"""LLM-backed constraint extraction with a deterministic offline fallback."""
+"""Bedrock-backed constraint extraction with a deterministic offline fallback."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from datetime import date, time
 from typing import Any, ClassVar, Protocol
 
 import boto3
-import httpx
 from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import Field, ValidationError
 
@@ -201,44 +200,6 @@ class DeterministicPreferenceParser:
         return time(hour_value, int(minute or 0))
 
 
-def build_system_prompt(catalog: VenueCatalog) -> str:
-    """Instructions and schema shared by every live extraction provider."""
-    venue_ids = ", ".join(venue.id for venue in catalog.all())
-    schema = json.dumps(ConstraintExtraction.model_json_schema(), separators=(",", ":"))
-    return (
-        "Extract travel constraints as one JSON object matching the supplied schema. "
-        "Never diagnose health conditions. Fatigue only affects walking and rest needs. "
-        "A venue mention or wording such as 'would like to visit' is a soft preference. "
-        "Put a venue in required_venue_ids only when the user explicitly says must, "
-        "required, or cannot miss; otherwise put it in preferred_venue_ids. "
-        "Do not invent venue ids; required_venue_ids may contain only these ids: "
-        f"{venue_ids}. Use conservative defaults for omitted fields. Schema: {schema}"
-    )
-
-
-def clean_json(text: str) -> str:
-    """Strip code fences and surrounding prose from a model's JSON answer."""
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
-        stripped = re.sub(r"\s*```$", "", stripped)
-    start, end = stripped.find("{"), stripped.rfind("}")
-    if start < 0 or end < start:
-        raise ValueError("model response did not contain a JSON object")
-    return stripped[start : end + 1]
-
-
-def fallback_outcome(
-    fallback: DeterministicPreferenceParser,
-    prompt: str,
-    journey_date: date,
-    warning: str,
-) -> ParseOutcome:
-    """Deterministic extraction that reports why the live provider was not used."""
-    outcome = fallback.parse(prompt, journey_date=journey_date)
-    return outcome.model_copy(update={"warnings": (warning,)})
-
-
 class BedrockPreferenceParser:
     """Use Bedrock for typed extraction, falling back safely if configured to do so."""
 
@@ -262,7 +223,7 @@ class BedrockPreferenceParser:
         try:
             response = self._bedrock_client().converse(
                 modelId=self.settings.bedrock_model_id,
-                system=[{"text": build_system_prompt(self.catalog)}],
+                system=[{"text": self._system_prompt()}],
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
                 inferenceConfig={
                     "maxTokens": self.settings.bedrock_max_tokens,
@@ -271,7 +232,7 @@ class BedrockPreferenceParser:
             )
             content = response["output"]["message"]["content"]
             text = next(item["text"] for item in content if "text" in item)
-            extraction = ConstraintExtraction.model_validate_json(clean_json(text))
+            extraction = ConstraintExtraction.model_validate_json(self._clean_json(text))
             usage = response.get("usage", {})
             return ParseOutcome(
                 request=extraction.to_request(journey_date),
@@ -292,11 +253,13 @@ class BedrockPreferenceParser:
             if not self.allow_fallback:
                 raise
             LOGGER.warning("Bedrock extraction failed; using deterministic fallback", exc_info=exc)
-            return fallback_outcome(
-                self.fallback,
-                prompt,
-                journey_date,
-                "Live Bedrock extraction failed; deterministic fallback was used.",
+            fallback = self.fallback.parse(prompt, journey_date=journey_date)
+            return fallback.model_copy(
+                update={
+                    "warnings": (
+                        "Live Bedrock extraction failed; deterministic fallback was used.",
+                    )
+                }
             )
 
     def _bedrock_client(self) -> Any:
@@ -308,74 +271,26 @@ class BedrockPreferenceParser:
             self._client = session.client("bedrock-runtime")
         return self._client
 
+    def _system_prompt(self) -> str:
+        venue_ids = ", ".join(venue.id for venue in self.catalog.all())
+        schema = json.dumps(ConstraintExtraction.model_json_schema(), separators=(",", ":"))
+        return (
+            "Extract travel constraints as one JSON object matching the supplied schema. "
+            "Never diagnose health conditions. Fatigue only affects walking and rest needs. "
+            "A venue mention or wording such as 'would like to visit' is a soft preference. "
+            "Put a venue in required_venue_ids only when the user explicitly says must, "
+            "required, or cannot miss; otherwise put it in preferred_venue_ids. "
+            "Do not invent venue ids; required_venue_ids may contain only these ids: "
+            f"{venue_ids}. Use conservative defaults for omitted fields. Schema: {schema}"
+        )
 
-class LMStudioPreferenceParser:
-    """Use a local LM Studio server through its OpenAI-compatible chat completions endpoint."""
-
-    def __init__(
-        self,
-        *,
-        settings: Settings,
-        catalog: VenueCatalog,
-        client: httpx.Client | None = None,
-        allow_fallback: bool = True,
-    ) -> None:
-        self.settings = settings
-        self.catalog = catalog
-        self.fallback = DeterministicPreferenceParser(catalog)
-        self.allow_fallback = allow_fallback
-        self._client = client
-
-    def parse(self, prompt: str, *, journey_date: date) -> ParseOutcome:
-        if self.settings.adaptsg_mode == "demo":
-            return self.fallback.parse(prompt, journey_date=journey_date)
-        try:
-            response = self._http_client().post(
-                f"{self.settings.lmstudio_base_url.rstrip('/')}/chat/completions",
-                json={
-                    "model": self.settings.lmstudio_model_id,
-                    "messages": [
-                        {"role": "system", "content": build_system_prompt(self.catalog)},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "temperature": 0,
-                    "max_tokens": self.settings.lmstudio_max_tokens,
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
-            text = str(payload["choices"][0]["message"]["content"])
-            extraction = ConstraintExtraction.model_validate_json(clean_json(text))
-            usage = payload.get("usage") or {}
-            return ParseOutcome(
-                request=extraction.to_request(journey_date),
-                source=f"lmstudio:{self.settings.lmstudio_model_id}",
-                token_usage=TokenUsage(
-                    input_tokens=int(usage.get("prompt_tokens", 0)),
-                    output_tokens=int(usage.get("completion_tokens", 0)),
-                ),
-            )
-        except (
-            httpx.HTTPError,
-            IndexError,
-            KeyError,
-            TypeError,
-            ValidationError,
-            ValueError,
-        ) as exc:
-            if not self.allow_fallback:
-                raise
-            LOGGER.warning(
-                "LM Studio extraction failed; using deterministic fallback", exc_info=exc
-            )
-            return fallback_outcome(
-                self.fallback,
-                prompt,
-                journey_date,
-                "Live LM Studio extraction failed; deterministic fallback was used.",
-            )
-
-    def _http_client(self) -> httpx.Client:
-        if self._client is None:
-            self._client = httpx.Client(timeout=self.settings.lmstudio_timeout_seconds)
-        return self._client
+    @staticmethod
+    def _clean_json(text: str) -> str:
+        stripped = text.strip()
+        if stripped.startswith("```"):
+            stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+            stripped = re.sub(r"\s*```$", "", stripped)
+        start, end = stripped.find("{"), stripped.rfind("}")
+        if start < 0 or end < start:
+            raise ValueError("Bedrock response did not contain a JSON object")
+        return stripped[start : end + 1]
