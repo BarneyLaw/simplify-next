@@ -123,9 +123,7 @@ def test_deterministic_parser_extracts_category_preferences(
         ("Take me to Singapore Zoo from Woodlands MRT tomorrow.", "Woodlands MRT"),
     ),
 )
-def test_deterministic_parser_recognises_plain_from_origin(
-    prompt: str, expected: str
-) -> None:
+def test_deterministic_parser_recognises_plain_from_origin(prompt: str, expected: str) -> None:
     outcome = DeterministicPreferenceParser(VenueCatalog()).parse(
         prompt, journey_date=date(2026, 9, 2)
     )
@@ -240,9 +238,7 @@ def test_bedrock_parser_accepts_forced_tool_use_output() -> None:
 
     assert outcome.request.start_label == "Bedok MRT"
     assert outcome.request.hard.total_budget_sgd == 45
-    assert [category.value for category in outcome.request.soft.preferred_categories] == [
-        "garden"
-    ]
+    assert [category.value for category in outcome.request.soft.preferred_categories] == ["garden"]
 
 
 def test_bedrock_cannot_promote_ordinary_visit_wording_to_required() -> None:
@@ -253,9 +249,7 @@ def test_bedrock_cannot_promote_ordinary_visit_wording_to_required() -> None:
                     "content": [
                         {
                             "toolUse": {
-                                "input": {
-                                    "required_venue_ids": ["asian-civilisations-museum"]
-                                }
+                                "input": {"required_venue_ids": ["asian-civilisations-museum"]}
                             }
                         }
                     ]
@@ -269,14 +263,10 @@ def test_bedrock_cannot_promote_ordinary_visit_wording_to_required() -> None:
         client=client,
     )
 
-    outcome = parser.parse(
-        "Visit Asian Civilisations Museum.", journey_date=date(2026, 9, 8)
-    )
+    outcome = parser.parse("Visit Asian Civilisations Museum.", journey_date=date(2026, 9, 8))
 
     assert outcome.request.hard.required_venue_ids == frozenset()
-    assert outcome.request.soft.preferred_venue_ids == frozenset(
-        {"asian-civilisations-museum"}
-    )
+    assert outcome.request.soft.preferred_venue_ids == frozenset({"asian-civilisations-museum"})
 
 
 def test_bedrock_rejects_unsupported_named_destination_instead_of_defaulting() -> None:
@@ -306,9 +296,7 @@ def test_bedrock_cannot_invent_an_origin_when_none_was_supplied() -> None:
         {
             "output": {
                 "message": {
-                    "content": [
-                        {"toolUse": {"input": {"start_label": "Dhoby Ghaut MRT Station"}}}
-                    ]
+                    "content": [{"toolUse": {"input": {"start_label": "Dhoby Ghaut MRT Station"}}}]
                 }
             }
         }
