@@ -100,21 +100,6 @@ img{max-width:100%}
 .pill.go:hover{color:var(--ink);border-color:var(--ink)}
 .pill.off{color:var(--disabled);background:var(--canvas);border-color:var(--ash);cursor:not-allowed}
 
-/* Provenance. Demo and live must be told apart without relying on hue: demo takes the
-   tinted surface and the hatched edge, live the plain surface and a solid one. */
-.banner{border:1px solid var(--fog);border-radius:var(--r-card);overflow:hidden;
-  display:flex;align-items:stretch;gap:16px}
-.banner .edge{width:8px;flex:0 0 8px}
-.banner .btxt{padding:16px 20px 16px 0}
-.btitle{font-weight:var(--w-head);font-size:13px;letter-spacing:.09em;text-transform:uppercase}
-.banner p{font-size:16px;color:var(--muted);margin-top:2px}
-.banner.demo{background:var(--mist)}
-.banner.demo .edge{background:repeating-linear-gradient(135deg,var(--ink) 0 3px,transparent 3px 7px)}
-.banner.demo .btitle{color:var(--ink)}
-.banner.live{background:var(--canvas)}
-.banner.live .edge{background:var(--ink)}
-.banner.live .btitle{color:var(--muted)}
-
 .musthaves{display:flex;flex-direction:column;gap:12px}
 .mhrow{display:flex;flex-wrap:wrap;gap:8px}
 .mhrow li{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;
@@ -197,6 +182,14 @@ button.chip[disabled]{color:var(--disabled);border-style:dashed;cursor:not-allow
 .band h3{font-size:20px}
 .band p{font-size:17px;color:var(--muted);line-height:1.5}
 .bandhead{display:flex;gap:12px;align-items:flex-start}
+.origins{border:0;padding:0;margin:12px 0 4px;display:flex;flex-direction:column;gap:8px}
+.origins legend{font-weight:var(--w-head);font-size:13px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted);padding:0 0 6px}
+.origins label{display:flex;align-items:center;gap:10px;font-size:17px;cursor:pointer;
+  padding:10px 14px;border:1px solid var(--fog);border-radius:var(--r-card);background:var(--canvas)}
+.origins label:hover{border-color:var(--ink)}
+.origins input{accent-color:var(--ink);width:18px;height:18px;flex:0 0 auto}
+.originacts{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
 .bandhead svg{flex:0 0 auto;margin-top:4px}
 
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:52px;
@@ -364,11 +357,6 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   </header>
 
   <div class="shell">
-    <div id="mode-banner" class="banner" role="status">
-      <span class="edge" aria-hidden="true"></span>
-      <div class="btxt"><p class="btitle" id="mode-title">Checking data provenance&hellip;</p><p id="mode-detail"></p></div>
-    </div>
-
     <section class="musthaves" id="musthaves" aria-label="Your must-haves" hidden>
       <p class="eyebrow">Your must-haves</p>
       <ul class="mhrow" id="musthaves-list"></ul>
@@ -786,6 +774,8 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       const error = new Error(detail);
       error.code = typeof payload.code === 'string' ? payload.code : 'transport_error';
       error.currentVersion = typeof payload.current_version === 'number' ? payload.current_version : null;
+      error.candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+      error.query = typeof payload.query === 'string' ? payload.query : '';
       throw error;
     }
     return payload;
@@ -814,6 +804,9 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       'This change increases cost beyond the approval threshold and needs an explicit caregiver decision.',
     tool_unavailable: (detail) =>
       `AdaptSG could not reach the weather and transport services just now. ${detail} Nothing in your day has been altered.`,
+    origin_not_verified: (detail) =>
+      `AdaptSG could not pin the starting point down to one place in Singapore: ${detail.replace(/\.$/, '')}. `
+      + 'Nothing has been planned yet.',
     journey_storage_unavailable: (detail) =>
       `${detail}. Nothing was applied; the current plan is retained unchanged.`,
     invalid_journey_transition: (detail) =>
@@ -863,6 +856,39 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
     if ($('alert-title')) $('alert-title').focus();
   }
 
+  // A start location the gazetteer matched to several distinct places is a question,
+  // not a failure: the traveller picks, and the plan is built from their answer.
+  function showOriginChooser(error) {
+    const el = $('alert');
+    const options = error.candidates.map((label, index) => `
+        <label>
+          <input type="radio" name="origin-choice" value="${safe(label)}"${index === 0 ? ' checked' : ''}>
+          <span>${safe(label)}</span>
+        </label>`).join('');
+    el.className = 'band notice';
+    el.innerHTML = `<div class="bandhead">${ICON_WARN}<div>
+      <h3 id="alert-title" tabindex="-1">Which starting point did you mean?</h3>
+      <p>${safe(describe(error))}</p>
+      <fieldset class="origins">
+        <legend>Starting point</legend>${options}
+      </fieldset>
+      <div class="originacts">
+        <button type="button" class="btn primary small" id="origin-confirm">Start from this place</button>
+        <button type="button" class="btn ghost small" id="origin-edit">Edit my description instead</button>
+      </div>
+    </div></div>`;
+    el.hidden = false;
+    $('alert-title').focus();
+    $('origin-confirm').onclick = () => {
+      const chosen = el.querySelector('input[name="origin-choice"]:checked');
+      if (chosen) submitPlan(chosen.value);
+    };
+    $('origin-edit').onclick = () => {
+      clearAlert();
+      $('prompt').focus();
+    };
+  }
+
   function activateView(id, focus) {
     for (const view of document.querySelectorAll('.view')) view.hidden = view.id !== id;
     if (lastViewId !== id && focus) focus();
@@ -889,7 +915,6 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
     journeyNavigationEnabled = false;
     pendingConsentStatus = null;
     updateHeaderAuthControls();
-    $('mode-banner').hidden = true;
     activateView('view-signedout', () => { if ($('signedout-title')) $('signedout-title').focus(); });
   }
 
@@ -909,7 +934,6 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
     pendingConsentStatus = status;
     journeyNavigationEnabled = false;
     updateHeaderAuthControls();
-    $('mode-banner').hidden = true;
     $('consent-policy').textContent = status.policy_version;
     $('consent-categories').innerHTML = status.categories
       .map((category) => `<li>${safe(CONSENT_CATEGORY_LABELS[category] || category.replaceAll('_', ' '))}</li>`)
@@ -1230,14 +1254,6 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       <p class="mapnote"><strong>Not to scale.</strong> A rough picture of where the stops sit relative to one another. Every stop is listed in order on the left.</p>`;
   }
 
-  function renderModeBanner(mode) {
-    $('mode-banner').className = `banner ${mode === 'demo' ? 'demo' : 'live'}`;
-    $('mode-title').textContent = mode === 'demo' ? 'Demo mode' : 'Live mode';
-    $('mode-detail').textContent = mode === 'demo'
-      ? 'These are example times and prices, not live information.'
-      : 'These times and prices were checked with Singapore transport and weather services.';
-  }
-
   function renderDraftView(pending) {
     const hard = pending.request.hard;
     showMustHaves(hard);
@@ -1551,12 +1567,11 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   function bootLanding() {
     journeyNavigationEnabled = true;
     updateHeaderAuthControls();
-    $('mode-banner').hidden = false;
     activateView('view-landing', null);
+    // Provenance is disclosed per plan, inside the evidence panel: see modeBadge().
     read('/api/health').then((data) => {
       runtimeMode = data.mode;
       storageMode = data.storage;
-      renderModeBanner(data.mode);
     }).catch((error) => setAlert(error));
   }
 
@@ -1613,7 +1628,10 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   $('grant-consent').onclick = () => grantPlanningConsent();
   $('decline-consent').onclick = () => signOut();
 
-  $('create').onclick = async () => {
+  // startLabel is set only when the traveller picked one of the candidates a prior
+  // origin_not_verified response offered. It is a label, never coordinates: the
+  // server verifies it against the gazetteer again before anything is planned.
+  async function submitPlan(startLabel) {
     clearAlert();
     replanLimitReached = false;
     replanLimitReason = '';
@@ -1622,12 +1640,10 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
     lastMonitorSnapshot = null;
     lastMonitorAt = null;
     activateView('view-generating', () => { if ($('generating-title')) $('generating-title').focus(); });
+    const body = {prompt: $('prompt').value, journey_date: $('journey-date').value};
+    if (startLabel) body.start_label = startLabel;
     try {
-      const result = await mutate(
-        '/api/journeys',
-        {prompt: $('prompt').value, journey_date: $('journey-date').value},
-        actionKey(),
-      );
+      const result = await mutate('/api/journeys', body, actionKey());
       renderJourney(result);
     } catch (error) {
       if (error.code === 'authentication_expired') {
@@ -1639,9 +1655,15 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
         return;
       }
       activateView('view-landing', null);
+      if (error.code === 'origin_not_verified' && error.candidates.length > 0) {
+        showOriginChooser(error);
+        return;
+      }
       setAlert(error);
     }
-  };
+  }
+
+  $('create').onclick = () => submitPlan(null);
 
   boot();
 </script>

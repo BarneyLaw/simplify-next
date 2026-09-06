@@ -72,7 +72,7 @@ Expressed against symbols that already exist, so nothing new is invented. `Journ
 
 | Route | Body | Returns |
 |---|---|---|
-| `POST /api/journeys` | `{prompt, journey_date}` | `JourneyState` (`DRAFT`, `pending_initial_itinerary` set, `version=1`) |
+| `POST /api/journeys` | `{prompt, journey_date, start_label?}` | `JourneyState` (`DRAFT`, `pending_initial_itinerary` set, `version=1`) |
 | `GET /api/journeys/{id}` | — | `JourneyState`, for refresh and conflict recovery |
 | `POST /api/journeys/{id}/decision` | `JourneyDecision` | `JourneyState` (`ACTIVE` or `REJECTED`) |
 | `POST /api/journeys/{id}/replan` | `{trigger}` | `JourneyState` with `latest_replan_proposal` |
@@ -98,9 +98,24 @@ advisory.
   than being a new configuration surface.
 - **A typed `code` field alongside `detail` on `422`**, drawn from the existing `errors.py`
   classes: `no_feasible_itinerary`, `tool_unavailable`, `replan_limit_reached`,
-  `approval_required`. This is the one item without which the rest is not usable — Role 3 has
+  `approval_required`, `origin_not_verified`. This is the one item without which the rest is not usable — Role 3 has
   already built the four distinct states in Streamlit, and no HTTP client can render them while
   the class is discarded at `web_api.py:47-49`.
+
+### `origin_not_verified` (422)
+
+A start location that matched no place, or several distinct ones, is a question for the traveller,
+not a provider failure. It carries `query` (what was searched for) and `candidates` (up to five
+gazetteer labels, empty when nothing matched at all) alongside `code` and `detail`.
+
+The client answers by re-posting `POST /api/journeys` with `start_label` set to the chosen
+candidate and a **fresh** `Idempotency-Key`: a different origin is a different request, and
+`start_label` is part of the operation fingerprint. Only a label crosses the boundary — never
+coordinates — so the server re-verifies the choice against the gazetteer before planning, and a
+forged label cannot inject a location.
+
+`tool_unavailable` (503) keeps its original meaning: the provider itself could not answer, and the
+plan fails closed per `AGENTS.md` rule 10.
 
 ## The idempotency question, as decided
 

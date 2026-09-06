@@ -49,12 +49,14 @@ have used it takes `--muted` (4.9:1) or `--disabled` (4.5:1). `scripts/check_web
 this — it is the rule in the system easiest to undo by accident, because `--ash` reads as "a grey"
 at a glance.
 
-**3. Provenance is achromatic but must stay unmistakable.**
-`AGENTS.md` rule 11 forbids representing demo estimates as live data. The DEMO banner therefore
-does not use an amber wash; it carries the claim through surface, texture and weight instead —
-`--mist` surface, a hatched `--ink` edge, an uppercase 600-weight title — against LIVE's plain
-surface and solid edge. The pinned badge literals in `modeBadge()` mirror
-`adaptsg.presentation.mode_badge` and are compared verbatim by a gate; restyle the banner, never
+**3. Provenance is achromatic, and attached to the plan rather than the page.**
+`AGENTS.md` rule 11 forbids representing demo estimates as live data. That claim used to ride on a
+standing banner above the planning form, which stated the runtime mode before there was anything to
+qualify — and read as an eyebrow on every screen, whether or not a plan existed. The disclosure now
+sits in the evidence panel, on the `Runtime mode` row, next to the routes and venues whose numbers
+it is actually about. The pinned badge literals in `modeBadge()` mirror
+`adaptsg.presentation.mode_badge` and are compared verbatim by a gate, and a second gate requires
+that row to read the resolved `/api/health` value rather than a literal; restyle the row, never
 retype the strings.
 
 **4. One translucent surface: the nav, and only the nav.**

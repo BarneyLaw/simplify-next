@@ -115,10 +115,13 @@ require(
   "the non-interactive signed-out heading must not paint a control-style focus outline",
 );
 
+// The standing mode banner is gone; the evidence panel is now the only place a
+// plan states whether its numbers are live or demo, so the badge must be wired
+// to the resolved runtime mode and not to a literal.
 require(
-  /function enterSignedOutState\(\)[\s\S]*?\$\(['"]mode-banner['"]\)\.hidden\s*=\s*true/.test(script)
-    && /function bootLanding\(\)[\s\S]*?\$\(['"]mode-banner['"]\)\.hidden\s*=\s*false/.test(script),
-  "the provenance banner must be shown with authenticated planning data, not unresolved on login",
+  /<dt>Runtime mode<\/dt><dd>\$\{safe\(modeBadge\(meta\.mode\)\)\}<\/dd>/.test(script)
+    && /runtimeMode\s*=\s*data\.mode/.test(script),
+  "every plan must disclose its runtime mode from the resolved /api/health value",
 );
 
 require(
