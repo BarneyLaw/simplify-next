@@ -141,7 +141,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r3-functional-aws-demo` | Remove stale Vercel browser metadata and reverify the complete static journey/auth flow | Merged in PR #32 |
 | `feature/r4-authenticated-lambda-smoke` | Cognito-aware direct-Lambda smoke plus real unsigned API rejection assertion | Merged in PR #35; deployment passes |
 | `feature/r1-durable-trust-records` | Durable consent/grants/intents, atomic per-journey audit and strict location ambiguity handling | Merged in PR #36; main run `34022280410` deployed successfully |
-| `feature/r4-configurable-bedrock-rollout` | Exact-resource Bedrock rollout variables, capped output, manual deployment trigger, connected-state verification and token-safe smoke behavior | In progress; Bedrock remains `DISABLED` until merge and controlled activation |
+| `feature/r4-configurable-bedrock-rollout` | Exact-resource Bedrock rollout variables, capped output, manual deployment trigger, connected-state verification and token-safe smoke behavior | PR #37; GitHub runs `34023830160` and `34023865253` passed correctness/security, Docker and SAM; deployment correctly skipped outside `main`; Bedrock remains `DISABLED` until merge and controlled activation |
 
 ## External setup still required
 
