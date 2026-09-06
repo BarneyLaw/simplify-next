@@ -6,6 +6,12 @@ Last updated: 2026-09-06 (Asia/Singapore)
 
 Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static-web foundation is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, and verified-email Cognito self-signup. Bedrock remains disabled. The URL currently serves the infrastructure placeholder; the static product UI and browser PKCE controls are a Role 3 handoff.
 
+The deployed demo passed all 22 read-only AWS posture checks on 2026-09-06. The bootstrap stack
+is updated so CI can repeat those checks after each deployment without access to application
+records, Cognito users, provider secrets, or Lambda environment values. Authenticated multi-user
+ownership remains blocked by the Role 1 independent-mode contract: deterministic provider mode
+currently selects the fixed `demo-caregiver` principal even after API Gateway validates Cognito.
+
 ## Completed milestones
 
 - [x] Narrowed scope to Singapore caregivers and mobility-limited travellers.
@@ -67,6 +73,9 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | AWS Lambda/DynamoDB deployment smoke | Passed | `adaptsg-demo` reached `CREATE_COMPLETE`; main commit `d38ae48` produced DynamoDB journey and private S3 evidence with zero Bedrock tokens |
 | AWS authenticated v2 deployment | Passed | `adaptsg-demo` reached `UPDATE_COMPLETE`; main run `33972607910` passed token-free smoke and public/protected route checks |
 | AWS static web deployment | Passed | `adaptsg-demo` reached `UPDATE_COMPLETE`; main run `33976769643` passed CloudFront page/runtime-config/same-origin API smoke; Cognito callback and logout URLs target CloudFront; Bedrock output is `DISABLED` |
+| AWS deployment posture | 22/22 passed | Live read-only verification in `ap-southeast-1`; private/versioned/encrypted S3, signed CloudFront origin, HTTPS and uncached API path, API metrics/logs/throttles, encrypted DynamoDB TTL, public Cognito PKCE client, and Bedrock disabled |
+| Current Python 3.12 CI gate | Passed | Branch run `34012492178` passed correctness, the 90% coverage threshold, dependency audit, Docker build and SAM validate/build; deployment was correctly skipped outside `main` |
+| Windows-local Python 3.12 gate | Platform discrepancy | 191/192 tests passed with 89.88% branch coverage; `tests/test_ui_streamlit_app.py::test_creating_a_plan_shows_the_locked_constraints_and_the_itinerary` rendered blank HTML locally but passed in Linux CI |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
 | LAN DNS/TLS/health | Passed | `sim-next.lab.packetcraft.dev` -> `192.168.1.250`; trusted HTTPS 200 |
@@ -86,6 +95,7 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 - [ ] Run Python 3.12 full gate, SAM validate/build, staging AWS integration and restore drill.
 - [x] Add local CloudFormation schema lint plus rollback-safe table protection controls.
 - [x] Add explicit OAuth-scoped API routes, privacy-safe API access logs and edge throttling on the Role 4 recovery branch.
+- [x] Add a read-only post-deploy verifier and apply its scoped GitHub role permissions; live demo passed 22/22 checks.
 - [ ] Complete the production-readiness handoffs in `docs/contracts/production-readiness-handoffs.md`.
 
 ## Current feature branches and merges
@@ -110,6 +120,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-aws-recovery-hardening` | API Gateway deployment permission, rollback-safe DynamoDB protection and local CloudFormation lint | Merged; second deployment rolled back at access-log activation |
 | `feature/r4-api-log-delivery-permissions` | CloudWatch Logs delivery permissions required by authenticated HTTP API access logging | Merged in PR #24; bootstrap and application deployment passed |
 | `feature/r4-aws-web-hosting` | CloudFront/private-S3 static hosting, same-origin API, Cognito self-signup, PKCE runtime contract and CI publishing | Merged in PR #25 and deployed; main run `33976769643` passed all checks and AWS smoke tests |
+| `feature/r4-deployment-posture` | Read-only live verification for token-free AWS security and service wiring | Ready for review; bootstrap update `UPDATE_COMPLETE`, live stack passed 22/22 checks, and branch run `34012492178` passed correctness, Docker and SAM |
 
 ## External setup still required
 
