@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from datetime import date, time
@@ -21,6 +20,7 @@ from adaptsg.domain import (
     TokenUsage,
     VenueCategory,
 )
+from adaptsg.errors import NoFeasibleItinerary
 from adaptsg.settings import Settings
 from adaptsg.tools.catalog import VenueCatalog
 from adaptsg.tools.origin import DEFAULT_ORIGIN_LABEL, is_vague_origin
@@ -54,9 +54,22 @@ class ConstraintExtraction(StrictModel):
     finish_by: time = time(17, 0)
     total_budget_sgd: float = Field(default=70, ge=0, le=1_000)
     rest_interval_minutes: int = Field(default=90, ge=20, le=240)
-    required_venue_ids: frozenset[str] = frozenset()
-    preferred_venue_ids: frozenset[str] = frozenset()
-    preferred_categories: tuple[VenueCategory, ...] = (VenueCategory.INDOOR_MUSEUM,)
+    required_venue_ids: frozenset[str] = Field(
+        default=frozenset(),
+        description="Catalog venue ids explicitly described as must, required, or cannot miss.",
+    )
+    preferred_venue_ids: frozenset[str] = Field(
+        default=frozenset(),
+        description="Catalog venue ids the traveller would like, without mandatory wording.",
+    )
+    preferred_categories: tuple[VenueCategory, ...] = ()
+    unmatched_place_names: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Named destinations or attractions that do not map to a supplied catalog venue id. "
+            "Do not include the starting location."
+        ),
+    )
     prefer_public_transport: bool = True
     minimise_cost: bool = True
     avoid_crowds: bool = False
@@ -94,9 +107,37 @@ class DeterministicPreferenceParser:
     VENUE_ALIASES: ClassVar[dict[str, str]] = {
         "gardens by the bay": "gardens-bay-outdoor",
         "national gallery": "national-gallery",
+        "asian civilisations museum": "asian-civilisations-museum",
+        "peranakan museum": "peranakan-museum",
         "artscience": "artscience-museum",
         "botanic gardens": "botanic-gardens",
         "national museum": "national-museum",
+        "cloud forest": "cloud-forest",
+        "flower dome": "flower-dome",
+        "marina barrage": "marina-barrage",
+        "fort canning": "fort-canning-park",
+        "esplanade": "esplanade",
+        "library@orchard": "library-orchard",
+        "library orchard": "library-orchard",
+        "jewel": "jewel-changi",
+        "science centre": "science-centre",
+        "funan": "funan-food-court",
+        "marina bay food hall": "marina-bay-food-hall",
+        "toa payoh food hub": "toa-payoh-food-hub",
+    }
+
+    CATEGORY_KEYWORDS: ClassVar[dict[VenueCategory, tuple[str, ...]]] = {
+        VenueCategory.INDOOR_MUSEUM: ("museum", "gallery", "art", "heritage"),
+        VenueCategory.INDOOR_ATTRACTION: (
+            "indoor",
+            "air-conditioned",
+            "air conditioned",
+            "science",
+        ),
+        VenueCategory.OUTDOOR_ATTRACTION: ("outdoor", "park", "scenic"),
+        VenueCategory.GARDEN: ("garden", "nature", "botanic"),
+        VenueCategory.FOOD: ("food", "lunch", "eat", "meal"),
+        VenueCategory.REST: ("rest", "relax", "relaxed", "quiet", "seating"),
     }
 
     def __init__(self, catalog: VenueCatalog) -> None:
@@ -127,6 +168,7 @@ class DeterministicPreferenceParser:
             ),
             required_venue_ids=required_venue_ids,
             preferred_venue_ids=mentioned_venue_ids - required_venue_ids,
+            preferred_categories=self._preferred_categories(lowered),
             prefer_public_transport="taxi" not in lowered,
             minimise_cost="budget" in lowered or "cost" in lowered,
             avoid_crowds="avoid crowds" in lowered,
@@ -170,6 +212,14 @@ class DeterministicPreferenceParser:
                     required.add(venue_id)
         return frozenset(required)
 
+    @classmethod
+    def _preferred_categories(cls, lowered: str) -> tuple[VenueCategory, ...]:
+        return tuple(
+            category
+            for category, keywords in cls.CATEGORY_KEYWORDS.items()
+            if any(re.search(rf"\b{re.escape(keyword)}\b", lowered) for keyword in keywords)
+        )
+
     @staticmethod
     def _integer(text: str, pattern: str, default: int) -> int:
         match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -186,13 +236,19 @@ class DeterministicPreferenceParser:
         The terminator has to include clause openers: "start at X and finish by
         5pm" would otherwise capture everything up to the full stop.
         """
-        match = re.search(
-            r"(?:starting|start)\s+(?:from|at)\s+([A-Za-z0-9 &'()/-]+?)"
-            r"(?:[,.;:]|\s+(?:and|at|by|around|before|after|then|to\s+visit)\b|$)",
-            prompt,
-            flags=re.IGNORECASE,
+        terminator = (
+            r"(?:[,.;:]|\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|"
+            r"\s+(?:and|at|by|around|before|after|then|today|tomorrow|to\s+visit)\b|$)"
         )
-        return match.group(1).strip() if match else None
+        patterns = (
+            rf"(?:starting|start)\s+(?:from|at)\s+([A-Za-z0-9 &'()/-]+?){terminator}",
+            rf"\bfrom\s+([A-Za-z0-9 &'()/-]+?){terminator}",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, prompt, flags=re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+        return None
 
     @staticmethod
     def _time_range(prompt: str) -> tuple[time, time]:
@@ -253,15 +309,22 @@ class BedrockPreferenceParser:
                 modelId=self.settings.bedrock_model_id,
                 system=[{"text": self._system_prompt()}],
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
+                toolConfig=self._tool_config(),
                 inferenceConfig={
                     "maxTokens": self.settings.bedrock_max_tokens,
                     "temperature": 0,
                 },
             )
             content = response["output"]["message"]["content"]
-            text = next(item["text"] for item in content if "text" in item)
-            extraction = ConstraintExtraction.model_validate_json(self._clean_json(text))
+            extraction = self._extract_response(content)
             extraction = self._reconcile_start_label(prompt, extraction)
+            extraction = self._reconcile_venue_preferences(prompt, extraction)
+            if extraction.unmatched_place_names:
+                unavailable = ", ".join(extraction.unmatched_place_names)
+                raise NoFeasibleItinerary(
+                    "the verified venue catalog does not include the requested place(s): "
+                    f"{unavailable}; choose a supported venue or describe a venue category"
+                )
             usage = response.get("usage", {})
             return ParseOutcome(
                 request=extraction.to_request(journey_date),
@@ -305,8 +368,33 @@ class BedrockPreferenceParser:
         """
         explicit = DeterministicPreferenceParser._explicit_start_label(prompt)
         if explicit is None or is_vague_origin(explicit):
-            return extraction
+            return extraction.model_copy(update={"start_label": DEFAULT_ORIGIN_LABEL})
         return extraction.model_copy(update={"start_label": explicit})
+
+    def _reconcile_venue_preferences(
+        self, prompt: str, extraction: ConstraintExtraction
+    ) -> ConstraintExtraction:
+        """Do not let model wording turn a preference into a hard requirement."""
+        lowered = prompt.casefold()
+        known_ids = {venue.id for venue in self.catalog.all()}
+        model_ids = extraction.required_venue_ids | extraction.preferred_venue_ids
+        unknown_ids = model_ids - known_ids
+        explicit_required = self.fallback._required_venue_ids(lowered)
+        preferred = (model_ids | self.fallback._mentioned_venue_ids(lowered)) - explicit_required
+        categories = tuple(
+            dict.fromkeys(
+                (*extraction.preferred_categories, *self.fallback._preferred_categories(lowered))
+            )
+        )
+        unmatched = tuple(dict.fromkeys((*extraction.unmatched_place_names, *sorted(unknown_ids))))
+        return extraction.model_copy(
+            update={
+                "required_venue_ids": explicit_required,
+                "preferred_venue_ids": frozenset(preferred & known_ids),
+                "preferred_categories": categories,
+                "unmatched_place_names": unmatched,
+            }
+        )
 
     def _bedrock_client(self) -> Any:
         if self._client is None:
@@ -319,16 +407,42 @@ class BedrockPreferenceParser:
 
     def _system_prompt(self) -> str:
         venue_ids = ", ".join(venue.id for venue in self.catalog.all())
-        schema = json.dumps(ConstraintExtraction.model_json_schema(), separators=(",", ":"))
         return (
-            "Extract travel constraints as one JSON object matching the supplied schema. "
+            "Extract travel constraints by calling the supplied tool exactly once. "
             "Never diagnose health conditions. Fatigue only affects walking and rest needs. "
             "A venue mention or wording such as 'would like to visit' is a soft preference. "
             "Put a venue in required_venue_ids only when the user explicitly says must, "
             "required, or cannot miss; otherwise put it in preferred_venue_ids. "
-            "Do not invent venue ids; required_venue_ids may contain only these ids: "
-            f"{venue_ids}. Use conservative defaults for omitted fields. Schema: {schema}"
+            "Use unmatched_place_names for every named destination that is not in the catalog, "
+            "but never put the journey origin there. Do not invent venue ids; venue-id fields "
+            f"may contain only these ids: {venue_ids}. "
+            "Use conservative defaults for omitted fields."
         )
+
+    @staticmethod
+    def _tool_config() -> dict[str, object]:
+        name = "record_travel_constraints"
+        return {
+            "tools": [
+                {
+                    "toolSpec": {
+                        "name": name,
+                        "description": "Record the traveller's typed itinerary constraints.",
+                        "inputSchema": {"json": ConstraintExtraction.model_json_schema()},
+                    }
+                }
+            ],
+            "toolChoice": {"tool": {"name": name}},
+        }
+
+    @staticmethod
+    def _extract_response(content: list[dict[str, Any]]) -> ConstraintExtraction:
+        for item in content:
+            tool_use = item.get("toolUse")
+            if isinstance(tool_use, dict) and isinstance(tool_use.get("input"), dict):
+                return ConstraintExtraction.model_validate(tool_use["input"])
+        text = next(item["text"] for item in content if "text" in item)
+        return ConstraintExtraction.model_validate_json(BedrockPreferenceParser._clean_json(text))
 
     @staticmethod
     def _clean_json(text: str) -> str:

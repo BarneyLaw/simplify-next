@@ -360,7 +360,7 @@ class HardConstraints(StrictModel):
 
 
 class SoftPreferences(StrictModel):
-    preferred_categories: tuple[VenueCategory, ...] = (VenueCategory.INDOOR_MUSEUM,)
+    preferred_categories: tuple[VenueCategory, ...] = ()
     preferred_venue_ids: frozenset[str] = frozenset()
     prefer_public_transport: bool = True
     minimise_cost: bool = True

@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 from botocore.exceptions import ClientError
 
+from adaptsg.errors import NoFeasibleItinerary
 from adaptsg.preference_parser import (
     BedrockPreferenceParser,
     DeterministicPreferenceParser,
@@ -93,6 +94,43 @@ def test_deterministic_parser_uses_conservative_defaults() -> None:
     assert outcome.warnings
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    (
+        ("I want outdoor gardens and nature", {"garden", "outdoor_attraction"}),
+        (
+            "A quiet indoor museum with somewhere to rest",
+            {"indoor_museum", "indoor_attraction", "rest"},
+        ),
+        ("Just food and lunch", {"food"}),
+    ),
+)
+def test_deterministic_parser_extracts_category_preferences(
+    prompt: str, expected: set[str]
+) -> None:
+    outcome = DeterministicPreferenceParser(VenueCatalog()).parse(
+        prompt, journey_date=date(2026, 9, 2)
+    )
+
+    assert {category.value for category in outcome.request.soft.preferred_categories} == expected
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    (
+        ("Plan 11 am-6 pm from Jurong East MRT.", "Jurong East MRT"),
+        ("Take my father from Punggol MRT 10 am-4 pm.", "Punggol MRT"),
+        ("Take me to Singapore Zoo from Woodlands MRT tomorrow.", "Woodlands MRT"),
+    ),
+)
+def test_deterministic_parser_recognises_plain_from_origin(prompt: str, expected: str) -> None:
+    outcome = DeterministicPreferenceParser(VenueCatalog()).parse(
+        prompt, journey_date=date(2026, 9, 2)
+    )
+
+    assert outcome.request.start_label == expected
+
+
 def test_explicit_no_wheelchair_requirement_is_respected() -> None:
     parser = DeterministicPreferenceParser(VenueCatalog())
     outcome = parser.parse(
@@ -122,12 +160,15 @@ def test_bedrock_parser_accepts_fenced_json_and_usage() -> None:
         catalog=VenueCatalog(),
         client=client,
     )
-    outcome = parser.parse("Plan it", journey_date=date(2026, 9, 2))
+    outcome = parser.parse("Plan it starting from Bishan.", journey_date=date(2026, 9, 2))
     assert outcome.source.startswith("bedrock:")
     assert outcome.request.start_label == "Bishan"
     assert outcome.request.hard.max_walking_distance_m == 300
     assert outcome.token_usage.input_tokens == 120
     assert client.calls[0]["inferenceConfig"]["temperature"] == 0
+    assert client.calls[0]["toolConfig"]["toolChoice"] == {
+        "tool": {"name": "record_travel_constraints"}
+    }
     system_prompt = client.calls[0]["system"][0]["text"]
     assert "would like to visit" in system_prompt
     assert "only when the user explicitly says must" in system_prompt
@@ -159,6 +200,117 @@ def test_bedrock_parser_preserves_explicit_qualified_start_label() -> None:
 
     assert outcome.source.startswith("bedrock:")
     assert outcome.request.start_label == "Toa Payoh MRT Station (NS19)"
+
+
+def test_bedrock_parser_accepts_forced_tool_use_output() -> None:
+    client = FakeBedrockClient(
+        {
+            "output": {
+                "message": {
+                    "content": [
+                        {
+                            "toolUse": {
+                                "toolUseId": "tool-1",
+                                "name": "record_travel_constraints",
+                                "input": {
+                                    "start_label": "Bedok MRT",
+                                    "total_budget_sgd": 45,
+                                    "preferred_categories": ["garden"],
+                                },
+                            }
+                        }
+                    ]
+                }
+            },
+            "usage": {"inputTokens": 90, "outputTokens": 25},
+        }
+    )
+    parser = BedrockPreferenceParser(
+        settings=Settings(adaptsg_mode="live", adaptsg_bedrock_enabled=True),
+        catalog=VenueCatalog(),
+        client=client,
+    )
+
+    outcome = parser.parse(
+        "Start from Bedok MRT and visit a garden under $45.",
+        journey_date=date(2026, 9, 8),
+    )
+
+    assert outcome.request.start_label == "Bedok MRT"
+    assert outcome.request.hard.total_budget_sgd == 45
+    assert [category.value for category in outcome.request.soft.preferred_categories] == ["garden"]
+
+
+def test_bedrock_cannot_promote_ordinary_visit_wording_to_required() -> None:
+    client = FakeBedrockClient(
+        {
+            "output": {
+                "message": {
+                    "content": [
+                        {
+                            "toolUse": {
+                                "input": {"required_venue_ids": ["asian-civilisations-museum"]}
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    )
+    parser = BedrockPreferenceParser(
+        settings=Settings(adaptsg_mode="live", adaptsg_bedrock_enabled=True),
+        catalog=VenueCatalog(),
+        client=client,
+    )
+
+    outcome = parser.parse("Visit Asian Civilisations Museum.", journey_date=date(2026, 9, 8))
+
+    assert outcome.request.hard.required_venue_ids == frozenset()
+    assert outcome.request.soft.preferred_venue_ids == frozenset({"asian-civilisations-museum"})
+
+
+def test_bedrock_rejects_unsupported_named_destination_instead_of_defaulting() -> None:
+    client = FakeBedrockClient(
+        {
+            "output": {
+                "message": {
+                    "content": [
+                        {"toolUse": {"input": {"unmatched_place_names": ["Singapore Zoo"]}}}
+                    ]
+                }
+            }
+        }
+    )
+    parser = BedrockPreferenceParser(
+        settings=Settings(adaptsg_mode="live", adaptsg_bedrock_enabled=True),
+        catalog=VenueCatalog(),
+        client=client,
+    )
+
+    with pytest.raises(NoFeasibleItinerary, match="Singapore Zoo"):
+        parser.parse("Take me to Singapore Zoo.", journey_date=date(2026, 9, 8))
+
+
+def test_bedrock_cannot_invent_an_origin_when_none_was_supplied() -> None:
+    client = FakeBedrockClient(
+        {
+            "output": {
+                "message": {
+                    "content": [{"toolUse": {"input": {"start_label": "Dhoby Ghaut MRT Station"}}}]
+                }
+            }
+        }
+    )
+    parser = BedrockPreferenceParser(
+        settings=Settings(adaptsg_mode="live", adaptsg_bedrock_enabled=True),
+        catalog=VenueCatalog(),
+        client=client,
+    )
+
+    outcome = parser.parse("Surprise me with a relaxed day.", journey_date=date(2026, 9, 8))
+
+    assert outcome.request.start_label == DEFAULT_ORIGIN_LABEL
+    assert any("No starting point was named" in warning for warning in outcome.warnings)
 
 
 def test_bedrock_failure_falls_back_safely() -> None:

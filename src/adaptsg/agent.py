@@ -2110,7 +2110,7 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
         max_replans=resolved.adaptsg_max_replans,
     )
     parser: PreferenceParser = (
-        BedrockPreferenceParser(settings=resolved, catalog=catalog)
+        BedrockPreferenceParser(settings=resolved, catalog=catalog, allow_fallback=False)
         if resolved.adaptsg_bedrock_enabled
         else DeterministicPreferenceParser(catalog)
     )
