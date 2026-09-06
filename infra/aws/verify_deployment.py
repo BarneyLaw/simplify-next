@@ -279,7 +279,8 @@ def verify_deployment(
     )
 
     api_url = _require_string(outputs, "AdaptSgHttpApiUrl", "stack outputs")
-    api_id = urlparse(api_url).hostname.split(".")[0] if urlparse(api_url).hostname else ""
+    api_hostname = urlparse(api_url).hostname
+    api_id = api_hostname.split(".")[0] if api_hostname else ""
     if not api_id:
         raise DeploymentVerificationError("could not derive API ID from AdaptSgHttpApiUrl")
     stage = reader.read("apigatewayv2", "get-stage", "--api-id", api_id, "--stage-name", "$default")
