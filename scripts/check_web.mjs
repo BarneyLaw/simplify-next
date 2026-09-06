@@ -101,7 +101,7 @@ require(
 
 require(
   /id="trip-navigation"/.test(markup)
-    && /\$\(['"]trip-navigation['"]\)\.hidden\s*=\s*authEnabled\s*&&\s*!signedIn/.test(script),
+    && /\$\(['"]trip-navigation['"]\)\.hidden\s*=\s*authEnabled\s*&&\s*\(!signedIn\s*\|\|\s*!journeyNavigationEnabled\)/.test(script),
   "journey navigation must be hidden while Cognito is enabled and the user is signed out",
 );
 
@@ -114,6 +114,14 @@ require(
   /function enterSignedOutState\(\)[\s\S]*?\$\(['"]mode-banner['"]\)\.hidden\s*=\s*true/.test(script)
     && /function bootLanding\(\)[\s\S]*?\$\(['"]mode-banner['"]\)\.hidden\s*=\s*false/.test(script),
   "the provenance banner must be shown with authenticated planning data, not unresolved on login",
+);
+
+require(
+  /read\(['"]\/api\/v1\/consents\/journey-planning\/status['"]\)/.test(script)
+    && /mutate\(\s*['"]\/api\/v1\/consents['"]/.test(script)
+    && /data_categories:\s*pendingConsentStatus\.categories/.test(script)
+    && /policy_version:\s*pendingConsentStatus\.policy_version/.test(script),
+  "the client must discover and submit the server-owned consent contract before planning",
 );
 
 // A rule inside @media carries no extra specificity, so a base rule for the same selector

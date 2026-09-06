@@ -20,6 +20,7 @@ const VIEW_IDS = [
   "view-approval",
   "view-rejected",
   "view-signedout",
+  "view-consent",
 ];
 
 function loadPatchedScript() {
@@ -46,6 +47,18 @@ function jsonResponse(status, body) {
 }
 
 const HEALTH_OK = jsonResponse(200, { status: "ok", mode: "demo", storage: "memory_demo" });
+const CONSENT_ACTIVE = jsonResponse(200, {
+  active: true,
+  policy_version: "consent-v1",
+  consent_id: "consent-1",
+  categories: ["journey_input", "location_routing"],
+});
+const CONSENT_REQUIRED = jsonResponse(200, {
+  active: false,
+  policy_version: "consent-v1",
+  consent_id: null,
+  categories: ["journey_input", "mobility_accessibility", "location_routing", "provider_processing"],
+});
 
 function makeConfig({ withAuth = true, authOverrides = {}, topOverrides = {} } = {}) {
   return {
@@ -344,6 +357,7 @@ await test("a successful callback exchanges the code for the access token, never
         expires_in: 3600,
         token_type: "Bearer",
       }),
+      CONSENT_ACTIVE,
       HEALTH_OK,
     ],
     seed: (sandbox) => {
@@ -367,6 +381,76 @@ await test("a successful callback exchanges the code for the access token, never
   assert(context.location.search === "?keep=1", "unrelated query parameters must survive the cleanup");
   assert(context.location.hash === "#frag", "the fragment must survive the cleanup");
   assert(context.document.getElementById("view-landing").hidden === false);
+  assert(fetchLog[2].url === "/api/v1/consents/journey-planning/status");
+});
+
+await test("a newly authenticated user explicitly grants the server-owned consent contract", async () => {
+  const config = makeConfig();
+  const { context, fetchLog } = await runScenario({
+    initialUrl: "https://demo.example/?code=AUTHCODE&state=matching-state",
+    fetchResponses: [
+      jsonResponse(200, config),
+      jsonResponse(200, {
+        access_token: "ACCESS2",
+        refresh_token: "REFRESH2",
+        expires_in: 3600,
+      }),
+      CONSENT_REQUIRED,
+      jsonResponse(200, {id: "consent-2", policy_version: "consent-v1"}),
+      HEALTH_OK,
+    ],
+    seed: (sandbox) => {
+      sandbox.sessionStorage.setItem("adaptsg.pkce.state", "matching-state");
+      sandbox.sessionStorage.setItem("adaptsg.pkce.verifier", "the-verifier");
+    },
+  });
+
+  assert(context.document.getElementById("view-consent").hidden === false);
+  assert(context.document.getElementById("view-landing").hidden === true);
+  assert(context.document.getElementById("trip-navigation").hidden === true);
+  assert(context.document.getElementById("sign-out").hidden === false);
+  assert(context.document.getElementById("consent-policy").textContent === "consent-v1");
+  assert(context.document.getElementById("consent-categories").innerHTML.includes("Mobility and accessibility needs"));
+
+  await context.document.getElementById("grant-consent").onclick();
+
+  const consentCall = fetchLog[3];
+  assert(consentCall.url === "/api/v1/consents");
+  assert(consentCall.init.method === "POST");
+  assert(consentCall.init.headers.Authorization === "Bearer ACCESS2");
+  assert(Boolean(consentCall.init.headers["Idempotency-Key"]));
+  const consentBody = JSON.parse(consentCall.init.body);
+  assert(consentBody.purpose === "journey_planning");
+  assert(consentBody.policy_version === "consent-v1");
+  assert(
+    consentBody.data_categories.join(",")
+      === "journey_input,mobility_accessibility,location_routing,provider_processing",
+  );
+  assert(context.document.getElementById("view-landing").hidden === false);
+  assert(context.document.getElementById("trip-navigation").hidden === false);
+});
+
+await test("a rejected consent mutation stays on the consent screen and remains retryable", async () => {
+  const config = makeConfig();
+  const { context } = await runScenario({
+    initialUrl: "https://demo.example/?code=AUTHCODE&state=matching-state",
+    fetchResponses: [
+      jsonResponse(200, config),
+      jsonResponse(200, {access_token: "ACCESS3", refresh_token: "REFRESH3", expires_in: 3600}),
+      CONSENT_REQUIRED,
+      jsonResponse(403, {code: "consent_required", detail: "policy changed"}),
+    ],
+    seed: (sandbox) => {
+      sandbox.sessionStorage.setItem("adaptsg.pkce.state", "matching-state");
+      sandbox.sessionStorage.setItem("adaptsg.pkce.verifier", "the-verifier");
+    },
+  });
+
+  await context.document.getElementById("grant-consent").onclick();
+
+  assert(context.document.getElementById("view-consent").hidden === false);
+  assert(context.document.getElementById("alert").hidden === false);
+  assert(context.document.getElementById("grant-consent").disabled === false);
 });
 
 // --- Token expiry, refresh, and the terminal 401 transition ------------------------
