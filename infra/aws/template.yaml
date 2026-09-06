@@ -124,6 +124,7 @@ Globals:
     Environment:
       Variables:
         ADAPTSG_MODE: !Ref ApplicationMode
+        ADAPTSG_PROVIDER_MODE: !Ref ApplicationMode
         ADAPTSG_BEDROCK_ENABLED: !If [BedrockInferenceEnabled, "true", "false"]
         ADAPTSG_AUTHENTICATION_MODE: cognito
         ADAPTSG_AUTHENTICATION_CONFIGURED: "true"

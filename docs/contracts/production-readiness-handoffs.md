@@ -19,6 +19,13 @@ Acceptance criteria:
   client headers never become identity.
 - Demo mode remains credential-free and deterministic.
 
+Implemented on `feature/r1-auth-provider-separation`: service construction now treats
+authentication, Singapore providers and Bedrock as independent switches. Cognito ownership uses
+API Gateway's verified `sub` for both ID-token `aud` and access-token `client_id` claim shapes;
+Bedrock-disabled construction selects the deterministic parser without creating a Bedrock parser
+or runtime client. AWS deployment and two-browser verification remain acceptance steps after the
+branch is merged.
+
 ## Role 1: durable trust records
 
 ```text
