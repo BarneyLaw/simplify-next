@@ -16,6 +16,7 @@ are ready.
   optional deletion protection, and retained replacements;
 - a private, encrypted, versioned S3 bucket for curated catalog and evaluation evidence;
 - a least-privilege Lambda role, X-Ray tracing, 14-day logs, alarms, and a dashboard;
+- a scoped SNS operations topic for CloudWatch alarms, with optional confirmed email delivery;
 - a separate bootstrap stack for GitHub OIDC, the SAM artifact bucket, and deployment roles.
 
 The CloudFormation execution role can expand only the regional
@@ -92,6 +93,7 @@ Copy the bootstrap stack outputs into GitHub Actions environment variables:
 | `ADAPTSG_COGNITO_CALLBACK_URL` | exact OAuth callback URL; may include a callback path |
 | `ADAPTSG_COGNITO_LOGOUT_URL` | exact browser destination after logout |
 | `ADAPTSG_PROVIDER_SECRET_NAME` | leave empty until `adaptsg/demo/providers` exists |
+| `ADAPTSG_ALARM_NOTIFICATION_EMAIL` | optional address for operational alerts; confirm the SNS subscription after deployment |
 
 Read the outputs with:
 
@@ -140,6 +142,12 @@ It publishes `public/` when a static UI exists, otherwise the infrastructure pla
 generated `/runtime-config.json`. Smoke tests cover the DynamoDB-backed journey path, zero Bedrock
 tokens, public AWS URL, same-origin health route, and private evidence upload.
 
+CloudWatch error and throttle alarms always publish to the scoped operations SNS topic. Set
+`ADAPTSG_ALARM_NOTIFICATION_EMAIL` to receive those messages and confirm the subscription from the
+AWS email before relying on it. Account-wide AWS Budgets require separate billing-management
+authority and are not created by this application stack. Check the workshop account's spending
+threshold and current spend in the Billing console instead.
+
 For a manual token-free deployment:
 
 ```powershell
@@ -164,7 +172,8 @@ sam deploy `
     BedrockModelArns=DISABLED `
     EnablePointInTimeRecovery=false `
     EnableDeletionProtection=false `
-    LambdaReservedConcurrency=-1
+    LambdaReservedConcurrency=-1 `
+    AlarmNotificationEmail=alerts@example.com
 ```
 
 Keep deletion protection disabled for the first deployment so CloudFormation can roll back a
@@ -187,7 +196,9 @@ scope before Lambda runs; application code then binds the verified `sub` claim t
 The UI should load `/runtime-config.json`, generate a fresh PKCE verifier/challenge and OAuth `state`,
 redirect to `authorizationEndpoint`, exchange the returned code at `tokenEndpoint`, and clear local
 tokens before visiting `logoutEndpoint`. The runtime file contains only public identifiers—never a
-client secret. Implementing those browser controls remains the Role 3 handoff.
+client secret. These browser controls are implemented in `public/index.html`; deployed two-user
+isolation still depends on the Role 1 identity/provider separation handoff because demo provider
+mode currently selects the fixed `demo-caregiver` principal.
 
 ## 6. Verify and operate
 
@@ -227,6 +238,13 @@ through the Lambda API instead, which is intentionally the only invocation grant
 Inspect `<stack-name>-operations` in CloudWatch. The Lambda emits low-cardinality EMF metrics for
 request latency/errors, validated itineraries, retained segments, tool verification, loop-cap
 hits, replans, and Bedrock tokens. It never emits prompts, journey IDs, or response bodies.
+
+The `OperationsAlarmTopicArn` output identifies the SNS topic used by the Lambda error and throttle
+alarms. If email delivery is configured, its subscription remains `PendingConfirmation` until the
+recipient accepts the AWS confirmation message. Alarm payloads contain operational metric state,
+not prompts, journey identifiers, or response bodies. A customer-managed KMS key was deliberately
+not added because CloudWatch service publishing requires additional key-policy management and a
+paid KMS key.
 
 ## 7. Enable Bedrock later
 

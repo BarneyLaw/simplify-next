@@ -97,6 +97,11 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert "HasLambdaReservedConcurrency" in template
     assert "ReservedConcurrentExecutions: !If" in template
     assert "Type: AWS::CloudWatch::Dashboard" in template
+    assert "OperationsAlarmTopic:" in template
+    assert "Type: AWS::SNS::Topic" in template
+    assert "Service: cloudwatch.amazonaws.com" in template
+    assert "AlarmActions: [!Ref OperationsAlarmTopic]" in template
+    assert "OKActions: [!Ref OperationsAlarmTopic]" in template
     assert "Type: AWS::Cognito::UserPool" in template
     assert "EnableSelfSignUp:" in template
     assert 'Default: "false"' in template
@@ -144,6 +149,7 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert '"EnableDeletionProtection=false"' in workflow
     assert '"EnableSelfSignUp=true"' in workflow
     assert 'deploy_stack "${web_app_url}" "${web_app_url}/" "${web_app_url}/"' in workflow
+    assert "ADAPTSG_ALARM_NOTIFICATION_EMAIL" in workflow
     assert "Verify public health and protected user routes" in workflow
     assert "Publish static web app and public runtime configuration" in workflow
     assert "runtime-config.json" in workflow
@@ -165,6 +171,8 @@ def test_aws_pipeline_uses_oidc_and_forces_bedrock_off() -> None:
     assert "cloudfront:CreateDistribution" in execution_role
     assert "cloudfront:CreateDistributionWithTags" in execution_role
     assert "cloudfront:CreateOriginAccessControl" in execution_role
+    assert "sns:CreateTopic" in execution_role
+    assert "sns:Subscribe" in execution_role
     assert "apigateway:TagResource" in execution_role
     assert "apigateway:UntagResource" in execution_role
     assert "apigateway:POST" in execution_role
@@ -217,6 +225,7 @@ def _deployed_posture_responses() -> dict[tuple[str, ...], dict[str, Any]]:
     api_id = "api123"
     user_pool_id = f"{region}_pool"
     client_id = "public-client"
+    operations_topic_arn = f"arn:aws:sns:{region}:{account}:{stack_name}-operations-alarms"
     responses: dict[tuple[str, ...], dict[str, Any]] = {
         (
             "cloudformation",
@@ -244,6 +253,10 @@ def _deployed_posture_responses() -> dict[tuple[str, ...], dict[str, Any]]:
                         {"OutputKey": "JourneyTableName", "OutputValue": f"{stack_name}-state-v2"},
                         {"OutputKey": "CognitoUserPoolId", "OutputValue": user_pool_id},
                         {"OutputKey": "CognitoClientId", "OutputValue": client_id},
+                        {
+                            "OutputKey": "OperationsAlarmTopicArn",
+                            "OutputValue": operations_topic_arn,
+                        },
                     ],
                 }
             ]
@@ -299,6 +312,28 @@ def _deployed_posture_responses() -> dict[tuple[str, ...], dict[str, Any]]:
                 "DestinationArn": "arn:aws:logs:ap-southeast-1:123:log-group:api",
                 "Format": "safe-json-format",
             },
+        },
+        ("sns", "get-topic-attributes", "--topic-arn", operations_topic_arn): {
+            "Attributes": {
+                "Policy": json.dumps(
+                    {
+                        "Statement": [
+                            {
+                                "Principal": {"Service": "cloudwatch.amazonaws.com"},
+                                "Resource": operations_topic_arn,
+                                "Condition": {
+                                    "ArnLike": {
+                                        "AWS:SourceArn": (
+                                            f"arn:aws:cloudwatch:{region}:{account}:alarm:"
+                                            f"{stack_name}-*"
+                                        )
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                ),
+            }
         },
         ("dynamodb", "describe-table", "--table-name", f"{stack_name}-state-v2"): {
             "Table": {
@@ -375,7 +410,7 @@ def test_deployment_posture_verifier_accepts_private_token_free_stack() -> None:
         region="ap-southeast-1",
     )
 
-    assert len(checks) == 22
+    assert len(checks) == 23
     assert all(check.passed for check in checks)
     assert any(check.name == "Bedrock stack output is disabled" for check in checks)
     assert any(
@@ -407,6 +442,22 @@ def test_deployment_posture_verifier_reports_public_bucket_and_bedrock_drift() -
     }
 
 
+def test_deployment_posture_verifier_reports_unscoped_notification_topic() -> None:
+    responses = _deployed_posture_responses()
+    topic_key = next(key for key in responses if key[:2] == ("sns", "get-topic-attributes"))
+    responses[topic_key]["Attributes"]["Policy"] = "{}"
+
+    checks = verify_deployment(
+        _FakeAwsReader(responses),
+        stack_name="adaptsg-demo",
+        region="ap-southeast-1",
+    )
+
+    assert {check.name for check in checks if not check.passed} == {
+        "operations notification topic accepts scoped CloudWatch alarms"
+    }
+
+
 def test_aws_pipeline_runs_read_only_deployment_posture_verification() -> None:
     workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     bootstrap = (REPOSITORY_ROOT / "infra" / "aws" / "bootstrap.yaml").read_text(encoding="utf-8")
@@ -425,5 +476,6 @@ def test_aws_pipeline_runs_read_only_deployment_posture_verification() -> None:
         "dynamodb:DescribeTimeToLive",
         "cognito-idp:DescribeUserPool",
         "cognito-idp:DescribeUserPoolClient",
+        "sns:GetTopicAttributes",
     ):
         assert read_action in deploy_role

@@ -42,6 +42,12 @@ Parameters:
     Default: 5
     MinValue: 1
     MaxValue: 1000
+  AlarmNotificationEmail:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^[^\s@]+@[^\s@]+\.[^\s@]+$'
+    ConstraintDescription: Must be empty or a valid single email address.
+    Description: Optional email address for operational alarm notifications; the SNS subscription must be confirmed.
   ProviderSecretName:
     Type: String
     Default: ""
@@ -106,6 +112,7 @@ Conditions:
   DeletionProtectionEnabled: !Equals [!Ref EnableDeletionProtection, "true"]
   HasLambdaReservedConcurrency: !Not [!Equals [!Ref LambdaReservedConcurrency, -1]]
   SelfSignUpEnabled: !Equals [!Ref EnableSelfSignUp, "true"]
+  HasAlarmNotificationEmail: !Not [!Equals [!Ref AlarmNotificationEmail, ""]]
 
 Globals:
   Function:
@@ -727,9 +734,46 @@ Resources:
             - x-amz-security-token
           MaxAge: 300
 
+  OperationsAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-operations-alarms"
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  OperationsAlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref OperationsAlarmTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudWatchAlarmPublish
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref OperationsAlarmTopic
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${AWS::StackName}-*"
+  OperationsAlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmNotificationEmail
+    Properties:
+      TopicArn: !Ref OperationsAlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmNotificationEmail
+
   Api5xxAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
+      AlarmName: !Sub "${AWS::StackName}-lambda-errors"
       Namespace: AWS/Lambda
       MetricName: Errors
       Dimensions:
@@ -741,10 +785,13 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions: [!Ref OperationsAlarmTopic]
+      OKActions: [!Ref OperationsAlarmTopic]
 
   LambdaThrottleAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
+      AlarmName: !Sub "${AWS::StackName}-lambda-throttles"
       AlarmDescription: AdaptSG reached its reserved-concurrency cost boundary.
       Namespace: AWS/Lambda
       MetricName: Throttles
@@ -758,6 +805,8 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
+      AlarmActions: [!Ref OperationsAlarmTopic]
+      OKActions: [!Ref OperationsAlarmTopic]
 
   AdaptSgDashboard:
     Type: AWS::CloudWatch::Dashboard
@@ -818,6 +867,9 @@ Outputs:
     Value: !Ref EvidenceBucket
   DashboardName:
     Value: !Ref AdaptSgDashboard
+  OperationsAlarmTopicArn:
+    Description: Encrypted SNS topic used by CloudWatch operational alarms.
+    Value: !Ref OperationsAlarmTopic
   BedrockStatus:
     Description: DISABLED means the Lambda role cannot invoke Bedrock or consume model tokens.
     Value: !If [BedrockInferenceEnabled, CONNECTED, DISABLED]

@@ -212,6 +212,23 @@ def verify_deployment(
         str(outputs.get("BedrockStatus")),
     )
 
+    operations_topic_arn = _require_string(outputs, "OperationsAlarmTopicArn", "stack outputs")
+    topic_attributes = _object(
+        reader.read("sns", "get-topic-attributes", "--topic-arn", operations_topic_arn).get(
+            "Attributes"
+        ),
+        "SNS operations topic attributes",
+    )
+    topic_policy = str(topic_attributes.get("Policy", ""))
+    _record(
+        checks,
+        "operations notification topic accepts scoped CloudWatch alarms",
+        "cloudwatch.amazonaws.com" in topic_policy
+        and operations_topic_arn in topic_policy
+        and stack_name in topic_policy,
+        operations_topic_arn,
+    )
+
     web_bucket = _require_string(outputs, "WebBucketName", "stack outputs")
     evidence_bucket = _require_string(outputs, "EvidenceBucketName", "stack outputs")
     _verify_bucket(reader, checks, web_bucket, "web asset bucket")

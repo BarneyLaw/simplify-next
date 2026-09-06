@@ -116,6 +116,7 @@ jobs:
       ADAPTSG_COGNITO_CALLBACK_URL: ${{ vars.ADAPTSG_COGNITO_CALLBACK_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8000' }}
       ADAPTSG_COGNITO_LOGOUT_URL: ${{ vars.ADAPTSG_COGNITO_LOGOUT_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8000' }}
       ADAPTSG_PROVIDER_SECRET_NAME: ${{ vars.ADAPTSG_PROVIDER_SECRET_NAME }}
+      ADAPTSG_ALARM_NOTIFICATION_EMAIL: ${{ vars.ADAPTSG_ALARM_NOTIFICATION_EMAIL }}
     steps:
       - uses: actions/checkout@v4
       - name: Download correctness evidence
@@ -166,6 +167,9 @@ jobs:
               "EnableDeletionProtection=false"
               "LambdaReservedConcurrency=-1"
             )
+            if [[ -n "${ADAPTSG_ALARM_NOTIFICATION_EMAIL}" ]]; then
+              parameters+=("AlarmNotificationEmail=${ADAPTSG_ALARM_NOTIFICATION_EMAIL}")
+            fi
             if [[ -n "${ADAPTSG_PROVIDER_SECRET_NAME}" ]]; then
               parameters+=("ProviderSecretName=${ADAPTSG_PROVIDER_SECRET_NAME}")
             fi
