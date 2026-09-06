@@ -121,12 +121,15 @@ ol,ul{margin:0;padding:0;list-style:none}
 .bandhead{display:flex;gap:10px;align-items:flex-start}
 .bandhead svg{flex:0 0 auto;margin-top:3px}
 
-.map{border:1px solid var(--line);border-radius:var(--r-band);background:var(--white);
-  box-shadow:var(--shadow-lift);padding:16px;display:flex;flex-direction:column;gap:10px}
+.map{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:var(--r-band);
+  background:var(--white);box-shadow:var(--shadow-lift);padding:16px;display:flex;
+  flex-direction:column;gap:12px}
 .maphead{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-.mapcanvas{position:relative;height:300px;border-radius:6px;background:var(--white);
-  border:1px solid var(--line);overflow:hidden;contain:layout paint}
-.pin{position:absolute;display:flex;align-items:center;gap:6px;z-index:1;max-width:calc(100% - 12px)}
+.mapcanvas{position:relative;width:100%;height:300px;box-sizing:border-box;border-radius:6px;
+  background:linear-gradient(135deg,var(--surface),var(--white));border:1px solid var(--line);
+  overflow:hidden;contain:layout paint}
+.pin{position:absolute;display:flex;align-items:center;gap:6px;max-width:calc(100% - 12px);
+  box-sizing:border-box;z-index:1}
 .pin-right{transform:translate(0,-50%)}
 .pin-left{transform:translate(-100%,-50%);flex-direction:row-reverse}
 .pin b{width:26px;height:26px;border-radius:50%;background:var(--blue-300);border:2px solid var(--blue-800);
@@ -134,7 +137,8 @@ ol,ul{margin:0;padding:0;list-style:none}
   font-style:normal}
 .pin span{font-size:13px;background:rgba(255,255,255,.92);padding:2px 6px;border-radius:4px;
   border:1px solid var(--line);white-space:normal;color:var(--ink);line-height:1.2;
-  min-width:0;max-width:clamp(110px,30%,190px);overflow-wrap:anywhere}
+  min-width:0;width:100px;max-width:100px;flex:0 1 100px;overflow-wrap:anywhere;box-sizing:border-box}
+.maproute{position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
 .mapnote{font-size:13px;color:var(--muted)}
 
 details{border:1px solid var(--line);border-radius:var(--r);background:var(--white)}

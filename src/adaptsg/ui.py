@@ -412,7 +412,7 @@ def evidence(
 
 
 def map_svg(itinerary: Itinerary) -> str:
-    """An inline SVG sketch of stop order (decorative — every pin is already a list row)."""
+    """A compact route sketch (decorative — every pin is already a list row)."""
     request = itinerary.request
     start = request.start_location
     points: list[tuple[str, float, float, str]] = [
@@ -441,16 +441,16 @@ def map_svg(itinerary: Itinerary) -> str:
         for (label, _lat, _lng, tag), x, y in zip(points, xs, ys, strict=True)
     ]
     top_by_index: dict[int, float] = {}
-    next_top = 14.0
-    for index, (_label, _tag, _left, top) in sorted(
-        enumerate(raw_positioned), key=lambda item: item[1][3]
-    ):
-        top_by_index[index] = max(top, next_top)
+    ordered = sorted(enumerate(raw_positioned), key=lambda item: item[1][3])
+    next_top = 15.0
+    for index, (_label, _tag, _left, top) in ordered:
+        top_by_index[index] = max(min(top, 85.0), next_top)
         next_top = top_by_index[index] + 16.0
-    if top_by_index:
-        overflow = max(top_by_index.values()) - 86.0
-        if overflow > 0:
-            top_by_index = {index: top - overflow for index, top in top_by_index.items()}
+    if top_by_index and max(top_by_index.values()) > 85.0:
+        spacing = 70.0 / max(len(ordered) - 1, 1)
+        top_by_index = dict(
+            (index, 15.0 + rank * spacing) for rank, (index, _point) in enumerate(ordered)
+        )
     positioned = [
         (label, tag, left, top_by_index[index])
         for index, (label, tag, left, _top) in enumerate(raw_positioned)
@@ -465,14 +465,19 @@ def map_svg(itinerary: Itinerary) -> str:
         f"{'M' if i == 0 else 'L'}{left:.1f} {top:.1f}"
         for i, (_label, _tag, left, top) in enumerate(positioned)
     )
+    route_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" '
+        'preserveAspectRatio="none">'
+        f'<path d="{path_d}" fill="none" stroke="#c1e1f7" stroke-width="1.2" '
+        'stroke-dasharray="3 3"/></svg>'
+    )
+    route_data = base64.b64encode(route_svg.encode("ascii")).decode("ascii")
     return (
         '<div class="map"><div class="maphead"><h2 style="font-size:18px">'
         "Where you are going</h2></div>"
         f'<div class="mapcanvas" aria-hidden="true">{pins}'
-        '<svg viewBox="0 0 100 100" preserveAspectRatio="none" '
-        'style="position:absolute;inset:0;width:100%;height:100%">'
-        f'<path d="{path_d}" fill="none" stroke="var(--blue-200)" stroke-width="1.2" '
-        'stroke-dasharray="3 3"/></svg></div>'
+        f'<img class="maproute" src="data:image/svg+xml;base64,{route_data}" alt="">'
+        "</div>"
         '<p class="mapnote"><strong>Not to scale.</strong> A rough picture of where the '
         "stops sit relative to one another. Every stop is listed in order on the "
         "left.</p></div>"

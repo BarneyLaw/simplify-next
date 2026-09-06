@@ -280,7 +280,7 @@ def render_draft_view(itinerary: Itinerary, mode: str) -> None:
         "<strong>Weather is not shown yet.</strong> AdaptSG only checks conditions once "
         "you have accepted a plan.</p></div>"
     )
-    left, right = st.columns([1, 0.42], gap="large")
+    left, right = st.columns([1.05, 0.95], gap="large")
     with left:
         st.html(ui.timeline(itinerary) + ui.finish_note(itinerary) + ui.summary(itinerary))
         st.caption(provenance_label(itinerary, mode=mode))
@@ -344,7 +344,7 @@ def render_active_view(itinerary: Itinerary, mode: str) -> None:
             f"unchanged</h3><p>{monitoring_value}</p></div></div></div>"
         )
 
-    left, right = st.columns([1, 0.42], gap="large")
+    left, right = st.columns([1.05, 0.95], gap="large")
     with left:
         if monitor_failed:
             button_label = "Retry verification"

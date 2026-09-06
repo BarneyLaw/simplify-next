@@ -144,3 +144,5 @@ def test_map_svg_spaces_nearby_stop_labels(itinerary: Itinerary) -> None:
 
     assert html.count('class="pin ') == len(itinerary.segments) + 1
     assert 'class="pin pin-right"' in html or 'class="pin pin-left"' in html
+    assert 'class="maproute"' in html
+    assert "top:-" not in html
