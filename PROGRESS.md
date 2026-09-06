@@ -316,6 +316,15 @@ with the provider, and the first is the `.env` issue above rather than a defect.
   there was a plan to qualify. Rule 11 is now carried by the evidence panel's `Runtime mode` row,
   where it sits beside the values it describes, and a static gate holds it to the resolved
   `/api/health` value.
+- **Eyebrows removed, em dashes removed:** every screen carried a small uppercase kicker above its
+  heading, which named the screen a second time in a smaller voice and, on the signed-out page,
+  named nothing at all (`Plan with confidence`, `Secure access`). All nine are gone with the
+  `.eyebrow` class, along with the 01/02/03 step row, and the signed-out headline and lede were
+  rewritten in concrete terms. Two labels stayed as plain words on `.label` because nothing else on
+  screen carries their information: `Your must-haves` over the pill row, and `Stop N, now` /
+  `Stop N, suggested` in the approval comparison. Em dashes are out of UI copy in all eleven places
+  they appeared; en dashes stay in numeric ranges, and `preference_parser.py` still accepts all
+  three dashes as traveller input. Recorded as deviation 6 in `docs/DESIGN.md`.
 
 - **One orchestrator:** the problem needs bounded coordination, not a swarm.
 - **Curated venues:** reliability and unsupported-claim prevention outweigh catalog breadth in the MVP.

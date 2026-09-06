@@ -107,8 +107,7 @@ img{max-width:100%}
   font-size:16px;font-weight:var(--w-ui);color:var(--muted)}
 .mhrow li b{font-weight:var(--w-head);color:var(--ink)}
 .mhrow svg{flex:0 0 auto}
-.eyebrow{font-weight:var(--w-head);font-size:13px;letter-spacing:.09em;
-  text-transform:uppercase;color:var(--muted)}
+.label{font-size:16px;font-weight:var(--w-mid);color:var(--muted)}
 
 .work{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:32px;align-items:start;
   padding-bottom:var(--section)}
@@ -183,8 +182,7 @@ button.chip[disabled]{color:var(--disabled);border-style:dashed;cursor:not-allow
 .band p{font-size:17px;color:var(--muted);line-height:1.5}
 .bandhead{display:flex;gap:12px;align-items:flex-start}
 .origins{border:0;padding:0;margin:12px 0 4px;display:flex;flex-direction:column;gap:8px}
-.origins legend{font-weight:var(--w-head);font-size:13px;letter-spacing:.09em;
-  text-transform:uppercase;color:var(--muted);padding:0 0 6px}
+.origins legend{font-weight:var(--w-mid);font-size:16px;color:var(--muted);padding:0 0 6px}
 .origins label{display:flex;align-items:center;gap:10px;font-size:17px;cursor:pointer;
   padding:10px 14px;border:1px solid var(--fog);border-radius:var(--r-card);background:var(--canvas)}
 .origins label:hover{border-color:var(--ink)}
@@ -254,12 +252,6 @@ details.tech .ev{padding:0 16px 16px;border-top:1px solid var(--fog);padding-top
    browser's control-style focus box around it. */
 .auth-intro h1:focus{outline:none}
 .auth-lede{max-width:620px;font-size:20px;color:var(--muted);line-height:1.5}
-.auth-promises{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;width:100%;
-  padding-top:8px}
-.auth-promises li{border-top:1px solid var(--fog);padding-top:14px;display:flex;
-  flex-direction:column;gap:5px}
-.auth-promises .step{font-size:13px;font-weight:var(--w-head);letter-spacing:.08em;color:var(--muted)}
-.auth-promises strong{font-size:16px;line-height:1.35}
 .auth-panel{border:1px solid var(--fog);border-radius:var(--r-lg);background:var(--mist);
   padding:36px;display:flex;flex-direction:column;gap:20px}
 .auth-panel h2{font-size:30px;line-height:1.15;letter-spacing:-.009em}
@@ -306,9 +298,6 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   .auth-intro .mark{height:62px}
   .auth-intro h1{font-size:38px}
   .auth-lede{font-size:18px}
-  .auth-promises{grid-template-columns:minmax(0,1fr);gap:8px}
-  .auth-promises li{display:grid;grid-template-columns:36px minmax(0,1fr);align-items:baseline;
-    padding-top:10px}
   .auth-panel{padding:24px}
   .auth-panel h2{font-size:26px}
   .consent-shell{margin-top:0}
@@ -349,7 +338,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       <nav class="topnav" aria-label="AdaptSG">
         <span class="trip-navigation" id="trip-navigation">
           <a class="pill go" href="#" id="new-trip">New trip</a>
-          <span class="pill off" aria-disabled="true">Past trips &mdash; not available yet</span>
+          <span class="pill off" aria-disabled="true">Past trips (not available yet)</span>
         </span>
         <a class="pill go" href="#" id="sign-out" hidden>Sign out</a>
       </nav>
@@ -358,7 +347,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
 
   <div class="shell">
     <section class="musthaves" id="musthaves" aria-label="Your must-haves" hidden>
-      <p class="eyebrow">Your must-haves</p>
+      <p class="label">Your must-haves</p>
       <ul class="mhrow" id="musthaves-list"></ul>
       <p class="note">These were read from what you wrote. To change one, describe your day again and make a new plan.</p>
     </section>
@@ -372,11 +361,11 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
             <img class="mark" src="/mascot-512.png" width="512" height="352" alt="">
             <h1>AdaptSG</h1>
             <p class="lede">travelling for everyone</p>
-            <p class="note" style="max-width:560px">Plan a day out in Singapore that respects a wheelchair, a walking limit, a lunchtime and a budget &mdash; and says so plainly when it cannot.</p>
+            <p class="note" style="max-width:560px">Plan a day out in Singapore that respects a wheelchair, a walking limit, a lunchtime and a budget, and says so plainly when it cannot.</p>
           </div>
 
           <div class="prompt">
-            <label for="prompt">Tell AdaptSG about the day in your own words &mdash; where you would like to go in Singapore, when, and anything needed to stay safe and comfortable.</label>
+            <label for="prompt">Tell AdaptSG about the day in your own words. Where you would like to go in Singapore, when, and anything needed to stay safe and comfortable.</label>
             <textarea id="prompt">Plan a 10 am-5 pm day for me and my 72-year-old mother, starting from Toa Payoh MRT Station (NS19). She uses a wheelchair, should not walk more than 400 metres at once, needs lunch before 1 pm, and we have a $70 transport and activity budget. We would like to visit Gardens by the Bay.</textarea>
             <p class="note">This box is filled in with an example. Edit it to describe your own day, or use it as it is.</p>
             <label for="journey-date">Journey date</label>
@@ -393,7 +382,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
 
       <div class="work single view" id="view-generating" hidden>
         <main style="max-width:820px;margin:0 auto;width:100%">
-          <div class="pagehead"><p class="eyebrow">Working</p><h1 id="generating-title" tabindex="-1">Planning your day</h1></div>
+          <div class="pagehead"><h1 id="generating-title" tabindex="-1">Planning your day</h1></div>
           <div class="band working" style="align-items:center;text-align:center;gap:14px;padding:36px 24px">
             <img class="mark" src="/mascot-512.png" width="512" height="352" alt="">
             <h2>Working out a safe plan&hellip;</h2>
@@ -411,7 +400,6 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       <div class="work view" id="view-draft" hidden>
         <main>
           <div class="pagehead">
-            <p class="eyebrow">Proposed plan</p>
             <h1>Current plan</h1>
             <div class="statusline" id="draft-statusline"></div>
           </div>
@@ -448,7 +436,6 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       <div class="work view" id="view-active" hidden>
         <main>
           <div class="pagehead">
-            <p class="eyebrow">Your accepted plan</p>
             <h1 id="active-title" tabindex="-1">Current plan</h1>
             <div class="statusline" id="active-statusline"></div>
           </div>
@@ -470,7 +457,6 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       <div class="work single view" id="view-approval" hidden>
         <main style="max-width:900px;margin:0 auto;width:100%">
           <div class="pagehead">
-            <p class="eyebrow">Suggested change</p>
             <h1 id="approval-title" tabindex="-1">AdaptSG suggests a change to your plan</h1>
             <div class="statusline" id="approval-statusline"></div>
           </div>
@@ -489,7 +475,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
 
       <div class="work single view" id="view-rejected" hidden>
         <main style="max-width:800px;margin:0 auto;width:100%">
-          <div class="pagehead"><p class="eyebrow">Your decision</p><h1 id="rejected-title" tabindex="-1">Plan rejected</h1></div>
+          <div class="pagehead"><h1 id="rejected-title" tabindex="-1">Plan rejected</h1></div>
           <div class="band notice"><p>Nothing was applied. The plan you were shown is not in use. Describe your day again to plan afresh.</p></div>
           <div class="actions"><button type="button" id="restart" class="btn primary">Describe the day again</button></div>
         </main>
@@ -499,24 +485,17 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
         <main class="auth-shell">
           <section class="auth-intro" aria-labelledby="signedout-title">
             <img class="mark" src="/mascot-512.png" width="512" height="352" alt="">
-            <p class="eyebrow">Plan with confidence</p>
-            <h1 id="signedout-title" tabindex="-1">A safer day out starts with your must-haves.</h1>
-            <p class="auth-lede">AdaptSG plans around mobility, rest, time and budget constraints, then checks every itinerary before showing it to you.</p>
-            <ul class="auth-promises" aria-label="How AdaptSG plans">
-              <li><span class="step">01</span><strong>Tell us what the day must respect</strong></li>
-              <li><span class="step">02</span><strong>Review a checked itinerary</strong></li>
-              <li><span class="step">03</span><strong>Approve changes before they happen</strong></li>
-            </ul>
+            <h1 id="signedout-title" tabindex="-1">A day out that holds up when you check it.</h1>
+            <p class="auth-lede">AdaptSG plans around a wheelchair, a walking limit, a lunchtime and a budget, then checks the result before showing it to you.</p>
           </section>
           <section class="auth-panel" aria-labelledby="auth-panel-title">
-            <p class="eyebrow">Secure access</p>
             <h2 id="auth-panel-title">Sign in to AdaptSG</h2>
-            <p class="note">Your account keeps each journey and its change history associated with you. You will continue to the secure sign-in page.</p>
+            <p class="note">Your journeys and every change to them stay with your account. Signing in opens a separate secure page.</p>
             <div class="actions auth-actions">
               <button type="button" id="sign-in" class="btn primary">Sign in</button>
               <button type="button" id="signup" class="btn ghost" hidden>Create account</button>
             </div>
-            <p class="auth-fineprint">AdaptSG does not book, purchase or pay for anything. A caregiver must approve changes above the configured cost threshold.</p>
+            <p class="auth-fineprint">AdaptSG never books, buys or pays for anything. A caregiver has to approve any change that costs more than the set threshold.</p>
           </section>
         </main>
       </div>
@@ -524,7 +503,6 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       <div class="work single view" id="view-consent" hidden>
         <main class="consent-shell">
           <div class="pagehead">
-            <p class="eyebrow">Your choice</p>
             <h1 id="consent-title" tabindex="-1">Before we plan your journey</h1>
           </div>
           <p class="auth-lede">AdaptSG needs your permission to use the details you enter for journey planning. The server decides the current policy and data categories; this page cannot broaden them.</p>
@@ -1086,7 +1064,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
 
   function purposeChip(segment, hard) {
     if (segment.purpose === 'lunch') {
-      return chip('blue', '', `Lunch — before ${timeOfDay(hard.lunch_latest)}, as you asked`);
+      return chip('blue', '', `Lunch before ${timeOfDay(hard.lunch_latest)}, as you asked`);
     }
     if (segment.purpose === 'rest') return chip('plain', '', 'Rest stop');
     return chip('plain', '', 'Somewhere to look around');
@@ -1181,7 +1159,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       <div class="sitem"><div class="k">Places you will visit</div><div class="v num">${itinerary.segments.length}</div></div>
       <div class="sitem"><div class="k">Most walking at once</div><div class="v">
         <span class="meter"><span class="track${over ? ' over' : ''}"><i style="width:${pct}%"></i></span>
-        <span class="num"${over ? ' style="color:var(--breach);font-weight:600"' : ''}>${longest} m ${over ? '— longer than' : 'of'} ${hard.max_walking_distance_m} m${over ? ' you allowed' : ''}</span></span>
+        <span class="num"${over ? ' style="color:var(--breach);font-weight:600"' : ''}>${longest} m${over ? ', longer than' : ' of'} ${hard.max_walking_distance_m} m${over ? ' you allowed' : ''}</span></span>
       </div></div>`;
     if (opts && opts.showChanges) {
       html += `<div class="sitem"><div class="k">Changes made so far</div><div class="v num">${itinerary.replan_count}</div></div>`;
@@ -1207,7 +1185,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
           <dt>Travel times and fares</dt><dd>${safe(provenanceSentence(itinerary, meta.mode))}</dd>
           <dt>The places</dt><dd>Every stop came from AdaptSG's curated catalog, each with wheelchair access recorded.</dd>
           <dt>Safety checks</dt><dd>This plan was checked against your must-haves before being offered, and it passed.</dd>
-          <dt>Cost of the day</dt><dd>${money(itinerary.total_cost_sgd)} &mdash; travel ${money(travelTotal)} and places ${money(placesTotal)}.</dd>
+          <dt>Cost of the day</dt><dd>${money(itinerary.total_cost_sgd)}: travel ${money(travelTotal)} and places ${money(placesTotal)}.</dd>
           <dt>This plan is kept until</dt><dd>${safe(evTimestamp(meta.expiresAt))}</dd>
         </dl>
         <details class="tech"><summary>Technical details (for reviewers)</summary>
@@ -1224,7 +1202,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   }
 
   function renderMap(itinerary, request_) {
-    const points = [{label: `Start — ${request_.start_label}`, loc: request_.start_location, tag: 'S'}];
+    const points = [{label: `Start: ${request_.start_label}`, loc: request_.start_location, tag: 'S'}];
     itinerary.segments.forEach((s, i) => points.push({label: s.venue.name, loc: s.venue.location, tag: String(i + 1)}));
     const latAvg = points.reduce((sum, p) => sum + p.loc.lat, 0) / points.length;
     const scale = Math.cos((latAvg * Math.PI) / 180) || 1;
@@ -1281,7 +1259,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       ? `<p style="margin-top:8px"><strong>Last successful check:</strong> ${safe(clock(lastMonitorSnapshot.observed_at))}, ${safe(minutesAgo(lastMonitorAt))}.</p>`
       : '';
     band.innerHTML = `<div class="bandhead">${ICON_WARN}<div>
-      <h3>Live checking failed &mdash; your plan is unchanged</h3>
+      <h3>Live checking failed. Your plan is unchanged</h3>
       <p>${safe(ERROR_COPY.tool_unavailable(monitorErrorDetail))}</p>
       ${lastCheck}
     </div></div>`;
@@ -1365,7 +1343,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
     const after = proposal.itinerary.total_cost_sgd;
     const delta = proposal.cost_delta_sgd;
     const deltaLabel = delta > 0 ? `adds ${money(delta)}` : delta < 0 ? `saves ${money(-delta)}` : 'does not change the cost';
-    const budgetNote = after <= hard.total_budget_sgd ? ` — still inside your ${money(hard.total_budget_sgd)} budget` : '';
+    const budgetNote = after <= hard.total_budget_sgd ? `, still inside your ${money(hard.total_budget_sgd)} budget` : '';
     $('approval-cost-band').className = `band ${proposal.requires_approval ? 'caution' : ''}`.trim();
     $('approval-cost-band').innerHTML = `<div class="bandhead">${proposal.requires_approval ? ICON_WARN : ICON_CHECK}<div>
       <h3>This change ${deltaLabel}</h3>
@@ -1381,13 +1359,13 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
         const a = proposal.itinerary.segments[change.segment_index];
         return `<div class="grid2" style="margin-top:8px">
           <div class="band" style="background:var(--canvas)">
-            <p class="eyebrow">Stop ${change.segment_index + 1} &mdash; now</p>
+            <p class="label">Stop ${change.segment_index + 1}, now</p>
             <h3>${safe(b.venue.name)}</h3>
             <div class="badges">${stopBadges(b, hard)}</div>
             <p class="num">${clock(b.activity_start)} to ${clock(b.activity_end)} &middot; ${b.route.walking_distance_m} m walking &middot; ${b.venue.estimated_cost_sgd === 0 ? 'Free' : money(b.venue.estimated_cost_sgd)}</p>
           </div>
           <div class="band blue">
-            <p class="eyebrow">Stop ${change.segment_index + 1} &mdash; suggested</p>
+            <p class="label">Stop ${change.segment_index + 1}, suggested</p>
             <h3>${safe(a.venue.name)}</h3>
             <div class="badges">${stopBadges(a, hard)}</div>
             <p class="num">${clock(a.activity_start)} to ${clock(a.activity_end)} &middot; ${a.route.walking_distance_m} m walking &middot; ${a.venue.estimated_cost_sgd === 0 ? 'Free' : money(a.venue.estimated_cost_sgd)}</p>
