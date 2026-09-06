@@ -4,7 +4,7 @@ Last updated: 2026-09-06 (Asia/Singapore)
 
 ## Current status
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static-web foundation is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, and verified-email Cognito self-signup. Bedrock remains disabled. The URL currently serves the infrastructure placeholder; the static product UI and browser PKCE controls are a Role 3 handoff.
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static-web foundation is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, and verified-email Cognito self-signup. Bedrock remains disabled. The static browser client under `public/` and its Cognito/PKCE controls are implemented on `feature/static-browser-cognito` and pass the full local gate; CI now publishes `public/` instead of the infrastructure placeholder on merge. The deployed demo still maps every authenticated request to the fixed `demo-caregiver` principal, so the static authentication handoff stays "browser implemented; deployed identity acceptance blocked" until Roles 1 and 4 land the identity/provider separation in `docs/contracts/production-readiness-handoffs.md`.
 
 The deployed demo passed all 22 read-only AWS posture checks on 2026-09-06. The bootstrap stack
 is updated so CI can repeat those checks after each deployment without access to application
@@ -36,6 +36,9 @@ currently selects the fixed `demo-caregiver` principal even after API Gateway va
 - [x] Added collision-free four-role coding-agent ownership and handoff instructions.
 - [x] Deployed a Python 3.12/Node 22 debug environment through the homelab Argo CD repository.
 - [x] Exposed the Streamlit demo at `https://sim-next.lab.packetcraft.dev` with LAN DNS and TLS.
+- [x] Retired Streamlit and restored the static browser client (`public/index.html`) with a Cognito
+      authorization-code/PKCE layer, served same-origin by `uvicorn adaptsg.web_api:app` locally, in
+      Docker, and on AWS CloudFront.
 
 ## Verified baseline
 
@@ -91,7 +94,8 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 - [x] Bound API Gateway-verified Cognito subjects to server-owned journeys.
 - [x] Added the single-caregiver ADR and point-in-time recovery runbook.
 - [ ] Complete transactional DynamoDB persistence for consent, intents and per-resource audit chains.
-- [ ] Complete the Role 3 static Cognito/PKCE browser client and live allowlist verification.
+- [x] Complete the Role 3 static Cognito/PKCE browser client.
+- [ ] Complete live allowlist verification.
 - [ ] Run Python 3.12 full gate, SAM validate/build, staging AWS integration and restore drill.
 - [x] Add local CloudFormation schema lint plus rollback-safe table protection controls.
 - [x] Add explicit OAuth-scoped API routes, privacy-safe API access logs and edge throttling on the Role 4 recovery branch.
@@ -120,7 +124,8 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-aws-recovery-hardening` | API Gateway deployment permission, rollback-safe DynamoDB protection and local CloudFormation lint | Merged; second deployment rolled back at access-log activation |
 | `feature/r4-api-log-delivery-permissions` | CloudWatch Logs delivery permissions required by authenticated HTTP API access logging | Merged in PR #24; bootstrap and application deployment passed |
 | `feature/r4-aws-web-hosting` | CloudFront/private-S3 static hosting, same-origin API, Cognito self-signup, PKCE runtime contract and CI publishing | Merged in PR #25 and deployed; main run `33976769643` passed all checks and AWS smoke tests |
-| `feature/r4-deployment-posture` | Read-only live verification for token-free AWS security and service wiring | Ready for review; bootstrap update `UPDATE_COMPLETE`, live stack passed 22/22 checks, and branch run `34012492178` passed correctness, Docker and SAM |
+| `feature/r4-deployment-posture` | Read-only live verification for token-free AWS security and service wiring | Merged; bootstrap update `UPDATE_COMPLETE`, live stack passed 22/22 checks, and branch run `34012492178` passed correctness, Docker and SAM |
+| `feature/static-browser-cognito` | Restored `public/index.html` and its serving path, added the Cognito PKCE auth layer plus `scripts/test_web_auth.mjs`, retired Streamlit | Full local gate passed; awaiting merge and AWS deployment/QA |
 
 ## External setup still required
 
@@ -132,8 +137,10 @@ The repository keeps each feature boundary visible and uses incremental commits.
 6. Obtain the required review for AdaptSG PR #9; all CI checks are passing.
 7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
 8. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
-9. Have Role 3 add the static UI and OAuth/PKCE controls under `public/`, consuming `/runtime-config.json`.
-10. Exercise Cognito signup, email verification, login, protected API access, and logout in two browsers.
+9. Have Roles 1 and 4 derive deployed identity from the verified Cognito `sub` instead of the fixed
+   `demo-caregiver` principal (see `docs/contracts/production-readiness-handoffs.md`).
+10. Exercise Cognito signup, email verification, login, protected API access, and logout in two browsers,
+    and confirm one authenticated principal cannot read another's journey.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
 
@@ -181,7 +188,7 @@ Out of MVP scope:
 - **One orchestrator:** the problem needs bounded coordination, not a swarm.
 - **Curated venues:** reliability and unsupported-claim prevention outweigh catalog breadth in the MVP.
 - **Smallest change:** candidate scoring heavily penalizes changed segments before cost/walking tie-breakers.
-- **AWS-only web delivery:** Streamlit remains a local/container interface; CloudFront serves the separate static browser client from private S3 and proxies `/api/*` to API Gateway.
+- **AWS-only web delivery:** Streamlit is retired, not retained as a local interface. `public/index.html` is the one client, served same-origin by FastAPI locally and in Docker; CloudFront serves the same directory from private S3 and proxies `/api/*` to API Gateway on AWS.
 - **Serverless AWS:** Lambda, DynamoDB on demand and optional Bedrock avoid always-on compute; Bedrock permission is disabled during the token-constrained phase.
 - **Demo/live separation:** deterministic adapters keep CI and the recorded story reproducible while live adapters remain independently testable.
 

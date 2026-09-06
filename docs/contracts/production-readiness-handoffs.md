@@ -43,9 +43,11 @@ CONTRACT CHANGE | JourneyRequest location population in src/adaptsg/preference_p
 ## Role 3: Cognito browser client
 
 ```text
-HANDOFF | role 3 | pending | public/index.html and allocated UI tests | consume CognitoDomain, CognitoClientId, CognitoCallbackUrl and AdaptSgHttpApiUrl; implement authorization-code flow with PKCE, state verification, access-token refresh/logout and Authorization bearer headers; never persist refresh tokens in localStorage | browser syntax, state mismatch, callback error, token expiry and authenticated API request tests | display demo/live provenance unchanged | coordinate callback path and API base URL with Role 4 parameters
+HANDOFF | role 3 | feature/static-browser-cognito | public/index.html, scripts/check_web.mjs, scripts/test_web_auth.mjs, tests/test_ui_browser_client.py | consumed /runtime-config.json's CognitoDomain-derived endpoints, CognitoClientId and same-origin apiBaseUrl; implemented authorization-code flow with PKCE, state verification, one proactive refresh before a request plus one reactive refresh-and-retry on 401, a terminal signed-out transition, and logout; never persists either bearer token | scripts/test_web_auth.mjs: 19 passing cases covering config fallback/fail-closed validation, sign-in/sign-up redirects, callback state/error handling, token exchange and refresh, the terminal 401 transition, logout, selfSignUpEnabled visibility and idempotency-key/expected_version discipline | demo/live provenance unchanged; browser never claims which parser (deterministic vs. Bedrock) served a request | coordinated callback path and API base URL with Role 4's runtime-config generation in ci.yml
 ```
 
-The browser must request the declared `adaptsg/*` scopes and send the access token, not the ID
-token, to API Gateway. No client secret, AWS access key or provider credential belongs in browser
-code.
+The browser requests the declared `adaptsg/*` scopes and sends the access token, not the ID
+token, to API Gateway. No client secret, AWS access key or provider credential is in browser
+code. This handoff is done, but the deployed demo still cannot demonstrate the two-user isolation
+acceptance check in `docs/contracts/static-web-auth-handoff.md` — see the Role 1 identity/provider
+separation handoff above, which stays pending until its owner lands it.

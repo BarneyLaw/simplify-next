@@ -14,6 +14,12 @@ Everything requested below was granted. This entry is kept as the record of what
 asked for and what was decided, not as an open request. Read it for the semantics; read
 `src/adaptsg/web_api.py` for the routes as they now stand.
 
+Every mention of Streamlit below is historical evidence from when both clients existed side by
+side (2026-09-02 to 2026-09-05). Streamlit itself was retired on 2026-09-06 in favour of
+restoring the browser client — see "The browser surface was restored, and Streamlit retired"
+below for the current state; nothing in the historical evidence needed correcting, since it
+accurately describes what was true when it was written.
+
 The `TEAM_WORKFLOW.md` one-liner for this request:
 
 ```text
@@ -175,19 +181,20 @@ recorded here so the next Role 1 session sees them as asked-for rather than assu
    `replan_limit_reached` boolean and a `max_replans` count) would let the composer disable itself
    proactively and let the approval screen name the real threshold.
 
-## The browser surface was retired (2026-09-05, Role 3)
+## The browser surface was restored, and Streamlit retired (2026-09-06, integration)
 
-`public/index.html`, `scripts/check_web.mjs` and `tests/test_ui_browser_client.py` are gone. The
-redesign above moved into Streamlit instead of a second port to the browser client, because the
-browser client existed only to reconstruct in HTTP what Streamlit already gets in-process:
-`NoFeasibleItinerary`, `ToolUnavailable`, `ReplanLimitReached` and `StaleJourneyVersion` arrive as
-themselves at a Python call site, one `except` clause each, rather than as a `code` field the
-client re-translates. The CSS and component markup carried over into `src/adaptsg/ui.py` and
-`src/adaptsg/ui.css` — that part was never the duplication.
+`public/index.html`, `scripts/check_web.mjs` and `tests/test_ui_browser_client.py` are back,
+recovered verbatim from before the 2026-09-05 retirement and extended with a Cognito PKCE auth
+layer (`docs/contracts/static-web-auth-handoff.md`). Streamlit needs a persistent process and a
+WebSocket session, so it can only be deployed as a container; Role 4's AWS static hosting
+(CloudFront/S3/API Gateway, `feature/r4-aws-web-hosting`) already expected the static client back,
+so `streamlit_app.py`, `src/adaptsg/ui.py` and `src/adaptsg/ui.css` are deleted rather than kept as
+a second local interface.
 
-`web_api.py` is unaffected: it still serves AWS Lambda and the Vercel function, and every route
-and status-code contract recorded above still holds. What is gone is the static client mounted in
-front of it (`public_directory()` and the `StaticFiles` mount in `create_app()`) — Vercel now
-serves the JSON API only, with no bundled browser page. A future HTTP client is still free to
-implement the four client invariants in `docs/roles/role-3-frontend-demo.md` against the routes
-this file describes; nothing here was retired.
+`web_api.py` is unaffected in the other direction too: it still serves AWS Lambda and the Vercel
+function, and every route and status-code contract recorded above still holds. The
+`public_directory()` helper and the `StaticFiles` mount in `create_app()` are back, mounted last
+so every API route is registered first — `uvicorn adaptsg.web_api:app` again serves the page and
+API same-origin locally, in Docker, and (via CloudFront's proxy) on AWS. The four client
+invariants in `docs/roles/role-3-frontend-demo.md` are implemented by the restored client, not
+just available for a future one to pick up.

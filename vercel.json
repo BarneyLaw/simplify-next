@@ -3,7 +3,7 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 30,
-      "excludeFiles": "{tests/**,htmlcov/**,infra/**,.github/**,.venv/**,streamlit_app.py,Dockerfile}"
+      "excludeFiles": "{tests/**,htmlcov/**,infra/**,.github/**,.venv/**,Dockerfile}"
     }
   }
 }

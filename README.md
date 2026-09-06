@@ -54,7 +54,7 @@ py -3.12 -m venv .venv
 python -m pip install --upgrade "pip>=26.2"
 python -m pip install -r requirements.txt
 Copy-Item .env.example .env
-streamlit run streamlit_app.py
+uvicorn adaptsg.web_api:app --reload --port 8000
 ```
 
 ### macOS or Linux
@@ -65,25 +65,20 @@ python3.12 -m venv .venv
 python -m pip install --upgrade 'pip>=26.2'
 python -m pip install -r requirements.txt
 cp .env.example .env
-streamlit run streamlit_app.py
-```
-
-Open `http://localhost:8501`. The default `ADAPTSG_MODE=demo` requires no network or secrets.
-
-### Local API only
-
-```sh
 uvicorn adaptsg.web_api:app --reload --port 8000
 ```
 
-Open `http://localhost:8000/docs` for OpenAPI. This FastAPI service backs Vercel and AWS
-Lambda; the full caregiver experience is the Streamlit app above.
+Open `http://localhost:8000`. The default `ADAPTSG_MODE=demo` requires no network or secrets, and
+`public/index.html` is served same-origin with the API: `/runtime-config.json` 404s locally, so the
+client skips Cognito sign-in entirely and boots straight into the deterministic demo. Open
+`http://localhost:8000/docs` for the OpenAPI schema. This same FastAPI service backs Vercel's JSON
+API and AWS Lambda.
 
 ## Docker
 
 ```sh
 docker build -t adaptsg .
-docker run --rm -p 8501:8501 adaptsg
+docker run --rm -p 8000:8000 adaptsg
 ```
 
 or:
@@ -95,14 +90,15 @@ docker compose up --build
 To pass a live configuration, use an explicit environment file:
 
 ```sh
-docker run --rm -p 8501:8501 --env-file .env adaptsg
+docker run --rm -p 8000:8000 --env-file .env adaptsg
 ```
 
-The image runs as a non-root user and exposes a Streamlit health check.
+The image runs as a non-root user and serves the page and API on `:8000` with an `/api/health`
+check.
 
 ## Configuration and secrets
 
-Copy `.env.example` to `.env`. `.env` and Streamlit secrets are ignored by Git.
+Copy `.env.example` to `.env`. `.env` is ignored by Git.
 
 | Variable | Default | Purpose |
 |---|---:|---|
@@ -148,7 +144,7 @@ sam build --template-file infra/aws/template.yaml
 sam deploy --guided --region ap-southeast-1 --capabilities CAPABILITY_NAMED_IAM
 ```
 
-The custom SAM Makefile builds a lean API artifact without Streamlit, pandas or pyarrow. The
+The custom SAM Makefile builds a lean API artifact without dev-only or notebook dependencies. The
 complete one-time GitHub OIDC bootstrap, Secrets Manager setup, deployment variables, manual
 commands, verification, and teardown procedure is in [`infra/aws/README.md`](infra/aws/README.md).
 
@@ -177,18 +173,19 @@ sam delete --stack-name adaptsg-demo
 
 ## AWS static browser deployment
 
-Streamlit cannot be converted into static HTML because it needs a Python server and WebSocket
-session. The AWS production path therefore uses:
+`public/index.html` is the one client, with no build step: the same file is served same-origin by
+`uvicorn adaptsg.web_api:app` locally and in Docker, and published as-is to CloudFront on AWS. The
+AWS production path uses:
 
-- Streamlit for local/container development;
-- a separate static browser client in `public/`;
-- private S3 plus CloudFront for the browser client;
+- private S3 plus CloudFront for the static browser client;
 - Cognito Managed Login and API Gateway/Lambda for authenticated application calls.
 
-On every main-branch deployment, CI uploads `public/` when it contains `index.html`; until the UI
-handoff lands, it uploads a small infrastructure status page. CI also generates
+On every main-branch deployment, CI uploads `public/` (it now always contains `index.html`; the
+`infra/aws/web/index.html` placeholder is only a fallback if it is ever missing). CI also generates
 `/runtime-config.json` with the public Cognito client/domain, PKCE endpoints, callback URL, scopes,
 and same-origin API base. No password, token, provider key, or client secret belongs in static files.
+The client validates that file's schema at boot and falls back to the local no-auth demo only on
+the expected local `404`; every other config error fails closed rather than silently disabling login.
 
 The final `WebAppUrl` CloudFormation output is the public AWS URL. Bedrock is connected only through
 an explicitly disabled permission condition and is not called by the deterministic demo.
@@ -229,7 +226,7 @@ No booking, payment or medical endpoint exists.
 
 ```text
 .
-|-- streamlit_app.py              Full caregiver demo UI
+|-- public/index.html             Static browser client with Cognito PKCE auth; no build step
 |-- api/index.py                  Dormant legacy serverless compatibility entry point
 |-- src/adaptsg/
 |   |-- agent.py                  Bounded LangGraph and service facade
@@ -237,10 +234,8 @@ No booking, payment or medical endpoint exists.
 |   |-- preference_parser.py      Bedrock extraction and safe fallback
 |   |-- planning.py               Planner and minimal-change replanner
 |   |-- validation.py             Deterministic hard-constraint authority
-|   |-- presentation.py           Pure UI/API formatting helpers shared by both
-|   |-- ui.py                     Pure HTML component renderers for Streamlit
-|   |-- ui.css                    Design tokens and component styles
-|   |-- web_api.py                Shared FastAPI routes
+|   |-- presentation.py           Pure formatting helpers the browser client's JS mirrors
+|   |-- web_api.py                Shared FastAPI routes; mounts public/ same-origin
 |   |-- aws_handler.py            Lambda/Mangum adapter
 |   |-- tools/catalog.py          Curated venue access
 |   |-- tools/routing.py          Demo and OneMap routing clients
@@ -248,10 +243,12 @@ No booking, payment or medical endpoint exists.
 |   `-- data/venues.json          Curated 18-venue demo dataset
 |-- tests/                         Unit, contract and 20 scenario tests
 |-- scripts/check.*               Local equivalents of CI gates
-|-- Dockerfile                    Non-root Streamlit image
-|-- vercel.json                   Dormant compatibility config; not deployed
+|-- scripts/check_web.mjs         Browser client syntax/accessibility/invariant checks
+|-- scripts/test_web_auth.mjs     Executable PKCE/callback/refresh/401 state-machine tests
+|-- Dockerfile                    Non-root uvicorn image serving public/ and the API on :8000
+|-- vercel.json                   JSON-API-only deployment config; no outputDirectory
 |-- infra/aws/template.yaml       CloudFront/S3/Cognito/API/Lambda SAM stack
-|-- infra/aws/web/index.html      Placeholder until Role 3 supplies public/index.html
+|-- infra/aws/web/index.html      Fallback page published only if public/index.html is missing
 |-- Makefile                      Lean SAM artifact builder
 |-- ARCHITECTURE.md               Flows, trust boundaries and deployment
 |-- AGENTS.md                     Safety, coding and Git rules for agents
@@ -281,7 +278,7 @@ Current verified baseline:
 - 98.1% branch coverage, with CI failing below 90%;
 - strict mypy, Ruff lint/format and Bandit;
 - dependency audit with no known vulnerabilities;
-- API and Streamlit headless smoke tests;
+- API and browser-client drift-guard smoke tests;
 - Docker build and AWS SAM validate/build jobs in GitHub Actions.
 
 The 20 scenarios include heavy rain, high PSI, flood, closure, train disruption, fatigue, reduced budget, early lunch/finish constraints, unverified accessibility and the replan loop cap.
