@@ -21,6 +21,8 @@
   --fog:#ededed;        /* card borders, dividers                                */
   --mist:#f2f2f2;       /* nav pill, input fill, inner surfaces                  */
   --silver:#c2c2c2;     /* skeletons                                             */
+  --veil:rgba(242,242,242,.72);   /* --mist at 72%: the floating nav's frosted ground  */
+  --veil-edge:rgba(20,20,20,.10); /* its hairline, so the pill reads as a surface      */
 
   /* The only chroma. Each verdict is always paired with an icon and a word, so colour
      is never the sole channel; each clears AA against --canvas on its own. */
@@ -62,10 +64,25 @@ img{max-width:100%}
 .app{min-height:100vh;background:var(--canvas);display:flex;flex-direction:column}
 .shell{width:100%;max-width:var(--page);margin:0 auto;padding:0 24px;
   display:flex;flex-direction:column;gap:32px}
-.topbar{position:sticky;top:0;z-index:10;background:var(--canvas);padding:16px 24px 24px}
-.topbar-inner{max-width:var(--page);margin:0 auto;background:var(--mist);
+/* The nav floats: no opaque band, so content scrolls visibly past and under the pill. The
+   pill is the only translucent surface on the page, and everything inside it that carries
+   text keeps an opaque ground, so contrast never depends on what happens to be behind.
+   pointer-events matters: once the band is transparent its 16/24px gutter still lies over
+   the content below and would silently eat clicks meant for the page.
+   No saturate() with the blur: the only chroma here is --breach/--caution/--pass, which
+   carry a safety verdict, and a chip must not read stronger for scrolling behind the nav. */
+.topbar{position:sticky;top:0;z-index:10;background:transparent;padding:16px 24px 24px;
+  pointer-events:none}
+.topbar-inner{max-width:var(--page);margin:0 auto;background:var(--veil);
+  border:1px solid var(--veil-edge);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
   border-radius:var(--r-pill);padding:10px 12px 10px 18px;display:flex;align-items:center;
-  justify-content:space-between;gap:16px;flex-wrap:wrap}
+  justify-content:space-between;gap:16px;flex-wrap:wrap;pointer-events:auto}
+/* Without backdrop-filter the veil is a flat 72% tint over live content, which is exactly
+   the low-contrast case the blur exists to prevent. Fall back to the opaque surface. */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  .topbar-inner{background:var(--mist)}
+}
 .brand{display:flex;align-items:center;gap:10px}
 .brand .word{font-size:21px;font-weight:var(--w-head);letter-spacing:-.02em;color:var(--ink)}
 /* The keyed mascot has a white body; the shadow gives it an edge on a white ground. */
@@ -79,7 +96,7 @@ img{max-width:100%}
   border:1px solid transparent}
 .pill.go{color:var(--ink);background:var(--canvas);border-color:var(--fog)}
 .pill.go:hover{color:var(--ink);border-color:var(--ink)}
-.pill.off{color:var(--disabled);border-color:var(--ash);cursor:not-allowed}
+.pill.off{color:var(--disabled);background:var(--canvas);border-color:var(--ash);cursor:not-allowed}
 
 /* Provenance. Demo and live must be told apart without relying on hue: demo takes the
    tinted surface and the hatched edge, live the plain surface and a solid one. */
