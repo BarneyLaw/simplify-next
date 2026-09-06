@@ -120,6 +120,7 @@ flowchart TB
       LF -. disabled by default .-> BR[Amazon Bedrock]
       LF --> EXT[Singapore public APIs]
       LF --> CW[CloudWatch EMF, logs, alarms + X-Ray]
+      CW --> SNS[SNS operations topic + optional email]
       CI --> S3[Private S3 evidence bucket]
     end
 ```
@@ -147,6 +148,7 @@ Implemented:
 - private encrypted/versioned S3 storage for catalog and evaluation artifacts;
 - Secrets Manager dynamic references for optional provider values;
 - CloudWatch EMF safety/latency metrics, alarms and dashboard plus X-Ray tracing;
+- a scoped SNS operations topic with optional confirmed email delivery for alarm state changes;
 - GitHub OIDC CI/CD with deterministic post-deployment Lambda/DynamoDB smoke coverage;
 - no VPC, NAT Gateway, load balancer, EC2, RDS or provisioned throughput.
 
@@ -156,8 +158,7 @@ Remaining production hardening:
   `demo-caregiver` principal (blocking Role 1/4 handoff; see
   `docs/contracts/production-readiness-handoffs.md`);
 - define per-user authorization and deletion/retention policy beyond the current TTL;
-- add an independent runtime switch for live Singapore providers without attempting Bedrock;
-- wire alarm actions to an approved notification target.
+- add an independent runtime switch for live Singapore providers without attempting Bedrock.
 
 ## Observability and evaluation
 

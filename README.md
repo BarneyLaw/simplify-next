@@ -158,7 +158,7 @@ The stack contains:
 - IAM-authenticated operations Function URL;
 - encrypted on-demand DynamoDB journey/idempotency storage with TTL;
 - private encrypted/versioned S3 catalog and evaluation-evidence storage;
-- reserved concurrency, X-Ray, retained logs, alarms, and an operations dashboard;
+- reserved concurrency, X-Ray, retained logs, alarms, an operations dashboard, and optional SNS email delivery;
 - optional exact-resource Bedrock permission, disabled by default.
 
 `BedrockModelArns=DISABLED` is the safe default: no inference permission is attached and the

@@ -4,7 +4,7 @@ Last updated: 2026-09-06 (Asia/Singapore)
 
 ## Current status
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static-web foundation is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, and verified-email Cognito self-signup. Bedrock remains disabled. The static browser client under `public/` and its Cognito/PKCE controls are implemented on `feature/static-browser-cognito` and pass the full local gate; CI now publishes `public/` instead of the infrastructure placeholder on merge. The deployed demo still maps every authenticated request to the fixed `demo-caregiver` principal, so the static authentication handoff stays "browser implemented; deployed identity acceptance blocked" until Roles 1 and 4 land the identity/provider separation in `docs/contracts/production-readiness-handoffs.md`.
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. Main run `34013996057` deployed commit `193c7eb` successfully. Bedrock remains disabled. The deployed demo still maps every authenticated request to the fixed `demo-caregiver` principal, so the static authentication handoff stays "browser implemented; deployed identity acceptance blocked" until Roles 1 and 4 land the identity/provider separation in `docs/contracts/production-readiness-handoffs.md`.
 
 The deployed demo passed all 22 read-only AWS posture checks on 2026-09-06. The bootstrap stack
 is updated so CI can repeat those checks after each deployment without access to application
@@ -78,7 +78,8 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | AWS static web deployment | Passed | `adaptsg-demo` reached `UPDATE_COMPLETE`; main run `33976769643` passed CloudFront page/runtime-config/same-origin API smoke; Cognito callback and logout URLs target CloudFront; Bedrock output is `DISABLED` |
 | AWS deployment posture | 22/22 passed | Live read-only verification in `ap-southeast-1`; private/versioned/encrypted S3, signed CloudFront origin, HTTPS and uncached API path, API metrics/logs/throttles, encrypted DynamoDB TTL, public Cognito PKCE client, and Bedrock disabled |
 | Current Python 3.12 CI gate | Passed | Branch run `34012492178` passed correctness, the 90% coverage threshold, dependency audit, Docker build and SAM validate/build; deployment was correctly skipped outside `main` |
-| Windows-local Python 3.12 gate | Platform discrepancy | 191/192 tests passed with 89.88% branch coverage; `tests/test_ui_streamlit_app.py::test_creating_a_plan_shows_the_locked_constraints_and_the_itinerary` rendered blank HTML locally but passed in Linux CI |
+| Latest merged AWS/browser deployment | Passed | Main run `34013996057` passed correctness, Docker, SAM, token-free deployment, static publishing and post-deploy verification at commit `193c7eb` |
+| Windows-local Python 3.12 gate | Platform discrepancy | 172 tests passed with 90.77% branch coverage on `feature/r4-cost-alerting`; the portable Python distribution lacks the standard-library `venv.EnvBuilder`, so local `pip-audit` cannot start, while the Linux main gate passes dependency audit |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
 | LAN DNS/TLS/health | Passed | `sim-next.lab.packetcraft.dev` -> `192.168.1.250`; trusted HTTPS 200 |
@@ -125,7 +126,8 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-api-log-delivery-permissions` | CloudWatch Logs delivery permissions required by authenticated HTTP API access logging | Merged in PR #24; bootstrap and application deployment passed |
 | `feature/r4-aws-web-hosting` | CloudFront/private-S3 static hosting, same-origin API, Cognito self-signup, PKCE runtime contract and CI publishing | Merged in PR #25 and deployed; main run `33976769643` passed all checks and AWS smoke tests |
 | `feature/r4-deployment-posture` | Read-only live verification for token-free AWS security and service wiring | Merged; bootstrap update `UPDATE_COMPLETE`, live stack passed 22/22 checks, and branch run `34012492178` passed correctness, Docker and SAM |
-| `feature/static-browser-cognito` | Restored `public/index.html` and its serving path, added the Cognito PKCE auth layer plus `scripts/test_web_auth.mjs`, retired Streamlit | Full local gate passed; awaiting merge and AWS deployment/QA |
+| `feature/static-browser-cognito` | Restored `public/index.html` and its serving path, added the Cognito PKCE auth layer plus `scripts/test_web_auth.mjs`, retired Streamlit | Merged in PR #29; main run `34013996057` deployed the static client successfully; independent browser-session QA remains pending |
+| `feature/r4-cost-alerting` | Scoped SNS delivery for Lambda error/throttle alarms plus post-deploy policy verification | 172 tests and 90.77% coverage passed locally; SAM and CloudFormation lint passed; bootstrap/application deployment pending |
 
 ## External setup still required
 
@@ -141,6 +143,11 @@ The repository keeps each feature boundary visible and uses incremental commits.
    `demo-caregiver` principal (see `docs/contracts/production-readiness-handoffs.md`).
 10. Exercise Cognito signup, email verification, login, protected API access, and logout in two browsers,
     and confirm one authenticated principal cannot read another's journey.
+11. Check current account spending and the hackathon threshold in the Billing console; the workshop
+    organization explicitly denies Cost Explorer API access, and the application stack does not request
+    account-level billing-management permissions.
+12. If operational email alerts are desired, set `ADAPTSG_ALARM_NOTIFICATION_EMAIL` and confirm the
+    SNS subscription after the Role 4 cost-alerting branch is merged and deployed.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
 
