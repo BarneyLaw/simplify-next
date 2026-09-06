@@ -138,7 +138,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-cost-alerting` | Scoped SNS delivery for Lambda error/throttle alarms plus post-deploy policy verification | Merged in PR #30 |
 | `feature/r3-functional-aws-demo` | Remove stale Vercel browser metadata and reverify the complete static journey/auth flow | Merged in PR #32 |
 | `feature/r4-authenticated-lambda-smoke` | Cognito-aware direct-Lambda smoke plus real unsigned API rejection assertion | Merged in PR #35; deployment passes |
-| `feature/r1-durable-trust-records` | Durable consent/grants/intents, atomic per-journey audit and strict location ambiguity handling | Local gates pass except the documented Windows portable-Python `pip-audit` startup issue; awaiting CI and review |
+| `feature/r1-durable-trust-records` | Durable consent/grants/intents, atomic per-journey audit and strict location ambiguity handling | GitHub runs `34021788823` and `34021804991` passed correctness/security, Docker and SAM; deployment correctly skipped outside `main`; awaiting review |
 
 ## External setup still required
 
