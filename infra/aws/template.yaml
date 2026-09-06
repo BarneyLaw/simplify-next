@@ -54,7 +54,12 @@ Parameters:
     Description: Optional Secrets Manager name with OneMap, LTA, and data.gov.sg JSON keys.
   BedrockModelId:
     Type: String
-    Default: global.anthropic.claude-haiku-4-5-20251001-v1:0
+    Default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  BedrockRegion:
+    Type: String
+    Default: us-east-1
+    AllowedPattern: '^[a-z]{2}-[a-z]+-[0-9]+$'
+    Description: Bedrock runtime endpoint region; independent of the application stack region.
   BedrockMaxTokens:
     Type: Number
     Default: 256
@@ -149,6 +154,7 @@ Globals:
         ADAPTSG_COGNITO_ISSUER: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CaregiverUserPool}
         ADAPTSG_COGNITO_AUDIENCE: !Ref CaregiverUserPoolClient
         AWS_XRAY_CONTEXT_MISSING: LOG_ERROR
+        BEDROCK_REGION: !Ref BedrockRegion
         BEDROCK_MODEL_ID: !Ref BedrockModelId
         BEDROCK_MAX_TOKENS: !Ref BedrockMaxTokens
         ONEMAP_API_TOKEN: !If

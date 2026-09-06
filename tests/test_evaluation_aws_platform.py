@@ -85,6 +85,7 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     assert "ADAPTSG_PROVIDER_MODE: !Ref ApplicationMode" in template
     assert 'ADAPTSG_BEDROCK_ENABLED: !If [BedrockInferenceEnabled, "true", "false"]' in template
     assert "BedrockMaxTokens:" in template
+    assert "BEDROCK_REGION: !Ref BedrockRegion" in template
     assert "BEDROCK_MAX_TOKENS: !Ref BedrockMaxTokens" in template
     assert "foundation-model/*" not in template
     assert "Resource: !Ref BedrockModelArns" in template
@@ -168,12 +169,14 @@ def test_aws_pipeline_uses_oidc_and_defaults_bedrock_off() -> None:
     assert "id-token: write" in workflow
     assert "aws-actions/configure-aws-credentials@v6" in workflow
     assert "vars.ADAPTSG_BEDROCK_MODEL_ID" in workflow
+    assert "vars.ADAPTSG_BEDROCK_REGION || 'us-east-1'" in workflow
     assert "vars.ADAPTSG_APPLICATION_MODE || 'demo'" in workflow
     assert '"ApplicationMode=${ADAPTSG_APPLICATION_MODE}"' in workflow
     assert "Live mode requires ADAPTSG_PROVIDER_SECRET_NAME" in workflow
     assert "vars.ADAPTSG_BEDROCK_MODEL_ARNS || 'DISABLED'" in workflow
     assert "vars.ADAPTSG_BEDROCK_MAX_TOKENS || '256'" in workflow
     assert '"BedrockModelArns=${ADAPTSG_BEDROCK_MODEL_ARNS}"' in workflow
+    assert '"BedrockRegion=${ADAPTSG_BEDROCK_REGION}"' in workflow
     assert '"BedrockMaxTokens=${ADAPTSG_BEDROCK_MAX_TOKENS}"' in workflow
     assert "if: env.ADAPTSG_BEDROCK_MODEL_ARNS == 'DISABLED'" in workflow
     assert '"LambdaReservedConcurrency=-1"' in workflow
@@ -270,6 +273,7 @@ def _deployed_posture_responses() -> dict[tuple[str, ...], dict[str, Any]]:
                     "Parameters": [
                         {"ParameterKey": "ApplicationMode", "ParameterValue": "demo"},
                         {"ParameterKey": "BedrockModelArns", "ParameterValue": "DISABLED"},
+                        {"ParameterKey": "BedrockRegion", "ParameterValue": "us-east-1"},
                     ],
                     "Outputs": [
                         {"OutputKey": "BedrockStatus", "OutputValue": "DISABLED"},
@@ -441,7 +445,7 @@ def test_deployment_posture_verifier_accepts_private_token_free_stack() -> None:
         region="ap-southeast-1",
     )
 
-    assert len(checks) == 23
+    assert len(checks) == 24
     assert all(check.passed for check in checks)
     assert any(
         check.name == "Bedrock stack output matches the expected connection state"
@@ -499,6 +503,25 @@ def test_deployment_posture_verifier_accepts_expected_bedrock_connection() -> No
     )
 
     assert all(check.passed for check in checks)
+
+
+def test_deployment_posture_verifier_reports_bedrock_region_drift() -> None:
+    responses = _deployed_posture_responses()
+    stack = responses[("cloudformation", "describe-stacks", "--stack-name", "adaptsg-demo")][
+        "Stacks"
+    ][0]
+    stack["Parameters"][2]["ParameterValue"] = "ap-southeast-1"
+
+    checks = verify_deployment(
+        _FakeAwsReader(responses),
+        stack_name="adaptsg-demo",
+        region="ap-southeast-1",
+        expected_bedrock_region="us-east-1",
+    )
+
+    assert {check.name for check in checks if not check.passed} == {
+        "Bedrock runtime region matches the protected environment"
+    }
 
 
 def test_deployment_posture_verifier_accepts_expected_live_mode() -> None:
@@ -571,6 +594,7 @@ def test_aws_pipeline_runs_read_only_deployment_posture_verification() -> None:
 
     assert "Verify deployed AWS security and service posture" in workflow
     assert "python infra/aws/verify_deployment.py" in workflow
+    assert '--expected-bedrock-region "${ADAPTSG_BEDROCK_REGION}"' in workflow
     for read_action in (
         "s3:GetBucketPolicyStatus",
         "s3:GetBucketPublicAccessBlock",

@@ -172,12 +172,15 @@ def verify_deployment(
     stack_name: str,
     region: str,
     expected_application_mode: str = "demo",
+    expected_bedrock_region: str = "us-east-1",
     expected_bedrock_model_arns: str = "DISABLED",
 ) -> tuple[VerificationCheck, ...]:
     """Return all security and service-wiring checks for a deployed stack."""
 
     if expected_application_mode not in {"demo", "live"}:
         raise DeploymentVerificationError("expected application mode must be demo or live")
+    if not expected_bedrock_region or expected_bedrock_region != expected_bedrock_region.strip():
+        raise DeploymentVerificationError("expected Bedrock region cannot be empty or padded")
     if not expected_bedrock_model_arns:
         raise DeploymentVerificationError("expected Bedrock model ARNs cannot be empty")
     if expected_bedrock_model_arns != "DISABLED":
@@ -220,6 +223,12 @@ def verify_deployment(
         "application mode matches the protected environment",
         parameters.get("ApplicationMode") == expected_application_mode,
         str(parameters.get("ApplicationMode")),
+    )
+    _record(
+        checks,
+        "Bedrock runtime region matches the protected environment",
+        parameters.get("BedrockRegion") == expected_bedrock_region,
+        str(parameters.get("BedrockRegion")),
     )
     _record(
         checks,
@@ -424,6 +433,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--region", default="ap-southeast-1")
     parser.add_argument("--profile")
     parser.add_argument("--expected-application-mode", choices=("demo", "live"), default="demo")
+    parser.add_argument("--expected-bedrock-region", default="us-east-1")
     parser.add_argument("--expected-bedrock-model-arns", default="DISABLED")
     return parser
 
@@ -437,6 +447,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             stack_name=args.stack_name,
             region=args.region,
             expected_application_mode=args.expected_application_mode,
+            expected_bedrock_region=args.expected_bedrock_region,
             expected_bedrock_model_arns=args.expected_bedrock_model_arns,
         )
     except DeploymentVerificationError as exc:

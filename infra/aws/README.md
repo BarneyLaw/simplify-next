@@ -94,7 +94,8 @@ Copy the bootstrap stack outputs into GitHub Actions environment variables:
 | `ADAPTSG_COGNITO_LOGOUT_URL` | exact browser destination after logout |
 | `ADAPTSG_PROVIDER_SECRET_NAME` | leave empty until `adaptsg/demo/providers` exists |
 | `ADAPTSG_ALARM_NOTIFICATION_EMAIL` | optional address for operational alerts; confirm the SNS subscription after deployment |
-| `ADAPTSG_BEDROCK_MODEL_ID` | `global.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `ADAPTSG_BEDROCK_REGION` | `us-east-1`; independent of the Singapore application stack |
+| `ADAPTSG_BEDROCK_MODEL_ID` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `ADAPTSG_BEDROCK_MODEL_ARNS` | `DISABLED` until the controlled activation in section 7 |
 | `ADAPTSG_BEDROCK_MAX_TOKENS` | `256` for the first controlled canary |
 
@@ -177,7 +178,8 @@ sam deploy `
     CognitoCallbackUrl=https://your-ui.example/auth/callback `
     CognitoLogoutUrl=https://your-ui.example/ `
     EnableSelfSignUp=true `
-    BedrockModelId=global.anthropic.claude-haiku-4-5-20251001-v1:0 `
+    BedrockRegion=us-east-1 `
+    BedrockModelId=us.anthropic.claude-haiku-4-5-20251001-v1:0 `
     BedrockModelArns=DISABLED `
     BedrockMaxTokens=256 `
     EnablePointInTimeRecovery=false `
@@ -260,36 +262,35 @@ paid KMS key.
 
 ## 7. Enable Bedrock later
 
-Do not set the ARN variable to the word `ENABLED`; CloudFormation needs actual IAM resources. For
-account `138851097788`, source region `ap-southeast-1`, and the configured Claude Haiku 4.5 global
-profile, set the protected GitHub environment variables to:
+Do not set the ARN variable to the word `ENABLED`; CloudFormation needs actual IAM resources. The
+application stack remains in `ap-southeast-1`, but the trainer-approved Claude Haiku 4.5 runtime
+uses the `us-east-1` endpoint and US inference profile. Set the protected GitHub environment
+variables to:
 
 ```text
-ADAPTSG_BEDROCK_MODEL_ID=global.anthropic.claude-haiku-4-5-20251001-v1:0
-ADAPTSG_BEDROCK_MODEL_ARNS=arn:aws:bedrock:ap-southeast-1:138851097788:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0,arn:aws:bedrock:ap-southeast-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0,arn:aws:bedrock:::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
+ADAPTSG_BEDROCK_REGION=us-east-1
+ADAPTSG_BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
+ADAPTSG_BEDROCK_MODEL_ARNS=arn:aws:bedrock:us-east-1:138851097788:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0,arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0,arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0,arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
 ADAPTSG_BEDROCK_MAX_TOKENS=256
 ```
 
 Activation sequence:
 
 1. Keep `ADAPTSG_BEDROCK_MODEL_ARNS=DISABLED` until this rollout code is merged and deployed.
-2. In the Bedrock console, complete Anthropic's one-time model-access/use-case form if the account
-   has not used Anthropic models before.
-3. Run `aws bedrock get-inference-profile --profile workshop --region ap-southeast-1
-   --inference-profile-identifier global.anthropic.claude-haiku-4-5-20251001-v1:0` after refreshing
-   SSO, and confirm it succeeds.
-4. Replace `DISABLED` with the exact comma-separated list above. Never use `*`.
-5. In GitHub Actions, run the **CI** workflow on `main`. The deployment grants the three exact
+2. Run `aws bedrock-runtime converse --profile workshop --region us-east-1` against
+   `us.anthropic.claude-haiku-4-5-20251001-v1:0` with a very small token cap and confirm it succeeds.
+3. Replace `DISABLED` with the exact comma-separated list above. Never use `*`.
+4. In GitHub Actions, run the **CI** workflow on `main`. The deployment grants the four exact
    resources and sets the Lambda's independent Bedrock switch without enabling live data APIs.
-6. Confirm the stack output `BedrockStatus=CONNECTED`, then submit one short planning request from
+5. Confirm the stack output `BedrockStatus=CONNECTED`, then submit one short planning request from
    the browser. Verify non-zero Bedrock token metrics and that the returned itinerary still passes
    deterministic validation.
-7. Restore `ADAPTSG_BEDROCK_MODEL_ARNS=DISABLED` and rerun the workflow when inference is no longer
+6. Restore `ADAPTSG_BEDROCK_MODEL_ARNS=DISABLED` and rerun the workflow when inference is no longer
    needed.
 
-The `global.` profile can route prompts outside Singapore to supported commercial AWS Regions. Do
-not use it for data with a Singapore-only residency requirement; select a suitable geographic or
-in-region model profile and adjust the exact ARN set instead.
+The `us.` profile routes prompts among supported US commercial AWS Regions. Do not use it for data
+with a Singapore-only residency requirement. Keep the model endpoint region separate from the
+Singapore application-stack region so DynamoDB, Cognito, S3 and API Gateway do not move.
 
 ## 8. Remove resources
 
