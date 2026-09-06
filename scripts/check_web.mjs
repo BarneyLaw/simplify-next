@@ -94,19 +94,35 @@ for (const [element, inner] of markup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/bu
 // mutation is keyed, and a transport fault is not a safety verdict. A syntax check cannot
 // see any of that, which is how the client once drifted a whole contract behind the routes.
 
+// Network access is split into three explicit helpers: config loading, OAuth token
+// exchange/refresh, and the API request() helper. Every literal /api/... call must
+// still flow through read() or mutate(), which flow through request(), so bearer and
+// idempotency headers can never be forgotten at a call site.
 require(
-  (script.match(/fetch\(/g) ?? []).length === 1,
-  "every request must go through the single fetch helper, or a call site can skip its headers",
+  (script.match(/fetch\(/g) ?? []).length === 3,
+  "network access must stay split into exactly three helpers: config, token, and API request",
 );
 
+const apiLiterals = [...script.matchAll(/[`'"](\/api\/[^`'"]*)[`'"]/g)];
+const helperCalls = [...script.matchAll(/\b(?:read|mutate)\(\s*(?:`[^`]*`|'[^']*'|"[^"]*")/g)];
 require(
-  (script.match(/['"]POST['"]/g) ?? []).length === 1,
-  "POSTs must be issued only by the mutate helper",
+  apiLiterals.length > 0 && apiLiterals.length === helperCalls.length,
+  "every literal /api/... call must flow through read() or mutate(), or a call site can skip its headers",
 );
 
+const requestFn = script.match(/async function request\([^)]*\)\s*\{[\s\S]*?\n  \}/)?.[0] ?? "";
 require(
-  /['"]Idempotency-Key['"]\]?\s*=/.test(script),
-  "the request helper must set the Idempotency-Key header the API requires",
+  requestFn.length > 0,
+  "the API request() helper must exist",
+);
+require(
+  /['"]Authorization['"]\]?\s*=/.test(requestFn)
+    && !/['"]Authorization['"]\]?\s*=/.test(script.replace(requestFn, "")),
+  "only the API request() helper may attach the Authorization header",
+);
+require(
+  /['"]Idempotency-Key['"]\]?\s*=/.test(requestFn) && !/['"]Idempotency-Key['"]\]?\s*=/.test(script.replace(requestFn, "")),
+  "only the API request() helper may set the Idempotency-Key header the API requires",
 );
 
 require(

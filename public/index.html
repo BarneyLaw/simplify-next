@@ -261,6 +261,7 @@ textarea,input[type="date"]{width:100%;border:1px solid var(--line-strong);borde
     <ul class="railnav">
       <li><a class="go" href="#" id="new-trip">New trip</a></li>
       <li><span class="off" aria-disabled="true">Past trips <span class="why">Not available yet</span></span></li>
+      <li><a class="go" href="#" id="sign-out" hidden>Sign out</a></li>
     </ul>
     <hr class="hr">
     <div id="rail-musthaves" hidden>
@@ -421,6 +422,20 @@ textarea,input[type="date"]{width:100%;border:1px solid var(--line-strong);borde
           <div class="actions"><button type="button" id="restart" class="btn primary">Describe the day again</button></div>
         </main>
       </div>
+
+      <div class="work single view" id="view-signedout" hidden>
+        <main style="max-width:640px;margin:0 auto;width:100%">
+          <div class="pagehead">
+            <p class="eyebrow">Sign in</p>
+            <h1 id="signedout-title" tabindex="-1">Sign in to plan a day</h1>
+          </div>
+          <p class="note">AdaptSG needs a signed-in session so your plan and any changes to it stay yours alone.</p>
+          <div class="actions">
+            <button type="button" id="sign-in" class="btn primary">Sign in</button>
+            <button type="button" id="signup" class="btn ghost" hidden>Create account</button>
+          </div>
+        </main>
+      </div>
     </div>
   </div>
 </div>
@@ -458,6 +473,17 @@ textarea,input[type="date"]{width:100%;border:1px solid var(--line-strong);borde
   let lastMonitorSnapshot = null;
   let lastMonitorAt = null;
 
+  // Runtime configuration and auth session. Never persisted: a page refresh means a
+  // new login, which is safer than exposing a bearer token to unrelated scripts.
+  // `var` (not `let`), matching every other top-level declaration meant to be reached
+  // as page-global state: it is what scripts/test_web_auth.mjs inspects between calls.
+  var cfg = null;
+  var accessToken = null;
+  var heldRefreshToken = null;
+  var accessTokenExpiresAt = 0;
+  const PKCE_VERIFIER_KEY = 'adaptsg.pkce.verifier';
+  const PKCE_STATE_KEY = 'adaptsg.pkce.state';
+
   const tomorrow = new Date(Date.now() + 86400000);
   $('journey-date').value = tomorrow.toISOString().slice(0, 10);
 
@@ -465,10 +491,177 @@ textarea,input[type="date"]{width:100%;border:1px solid var(--line-strong);borde
     return String(value).replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
   }
 
+  // Helper 1 of 3: config loading. Runs once at boot, before any API or OAuth call.
+  function validateRuntimeConfig(candidate) {
+    const fail = (reason) => { throw new Error(`runtime configuration is invalid: ${reason}`); };
+    if (!candidate || typeof candidate !== 'object') fail('response is not an object');
+    if (candidate.schemaVersion !== 1) fail('unsupported schemaVersion');
+    if (typeof candidate.apiBaseUrl !== 'string' || !candidate.apiBaseUrl) fail('missing apiBaseUrl');
+    if (candidate.auth === null) return candidate;
+    const auth = candidate.auth;
+    if (!auth || typeof auth !== 'object') fail('auth must be an object or null');
+    if (auth.responseType !== 'code') fail('auth.responseType must be "code"');
+    if (auth.pkceRequired !== true) fail('auth.pkceRequired must be true');
+    for (const field of ['signInEndpoint', 'signUpEndpoint', 'tokenEndpoint', 'logoutEndpoint',
+      'clientId', 'redirectUri', 'logoutUri']) {
+      if (typeof auth[field] !== 'string' || !auth[field]) fail(`missing auth.${field}`);
+    }
+    if (!Array.isArray(auth.scopes) || auth.scopes.length === 0
+      || auth.scopes.some((scope) => typeof scope !== 'string' || !scope)) {
+      fail('auth.scopes must be a non-empty array of strings');
+    }
+    if (typeof auth.selfSignUpEnabled !== 'boolean') fail('auth.selfSignUpEnabled must be boolean');
+    return candidate;
+  }
+
+  async function loadRuntimeConfig() {
+    let response;
+    try {
+      response = await fetch('/runtime-config.json');
+    } catch (networkError) {
+      throw new Error('could not reach the runtime configuration endpoint');
+    }
+    if (response.status === 404) return {apiBaseUrl: '/api', auth: null};
+    if (!response.ok) throw new Error(`runtime configuration request failed with status ${response.status}`);
+    let parsed;
+    try {
+      parsed = await response.json();
+    } catch (jsonError) {
+      throw new Error('runtime configuration is not valid JSON');
+    }
+    return validateRuntimeConfig(parsed);
+  }
+
+  // PKCE: a random verifier and a separate random state, kept only in this browser
+  // session, and a SHA-256 challenge derived from the verifier. WebCrypto only.
+  function base64UrlEncode(bytes) {
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function randomBase64Url(byteLength) {
+    const bytes = new Uint8Array(byteLength);
+    crypto.getRandomValues(bytes);
+    return base64UrlEncode(bytes);
+  }
+
+  async function codeChallengeFor(verifier) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+    return base64UrlEncode(new Uint8Array(digest));
+  }
+
+  async function beginSignIn(kind) {
+    const verifier = randomBase64Url(32);
+    const state = randomBase64Url(32);
+    sessionStorage.setItem(PKCE_VERIFIER_KEY, verifier);
+    sessionStorage.setItem(PKCE_STATE_KEY, state);
+    const challenge = await codeChallengeFor(verifier);
+    const endpoint = kind === 'signup' ? cfg.auth.signUpEndpoint : cfg.auth.signInEndpoint;
+    const params = new URLSearchParams({
+      client_id: cfg.auth.clientId,
+      response_type: 'code',
+      redirect_uri: cfg.auth.redirectUri,
+      scope: cfg.auth.scopes.join(' '),
+      state,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    });
+    location.href = `${endpoint}?${params.toString()}`;
+  }
+
+  // Helper 2 of 3: OAuth token exchange and refresh. Both grant types share this one
+  // form-encoded POST to tokenEndpoint; neither sends a client secret.
+  async function requestToken(formFields) {
+    const response = await fetch(cfg.auth.tokenEndpoint, {
+      method: 'POST',
+      headers: {'content-type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams(formFields).toString(),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      const detail = typeof payload.error_description === 'string'
+        ? payload.error_description
+        : (payload.error || 'the token request failed');
+      throw new Error(detail);
+    }
+    return payload;
+  }
+
+  // Only the access token authenticates API calls; the ID token is never requested
+  // for that purpose and is not retained.
+  function applyTokenResponse(payload) {
+    accessToken = payload.access_token;
+    if (payload.refresh_token) heldRefreshToken = payload.refresh_token;
+    const expiresInMs = Number(payload.expires_in) * 1000;
+    accessTokenExpiresAt = Date.now() + (Number.isFinite(expiresInMs) ? expiresInMs : 0);
+  }
+
+  async function exchangeAuthorizationCode(code, verifier) {
+    applyTokenResponse(await requestToken({
+      grant_type: 'authorization_code',
+      client_id: cfg.auth.clientId,
+      code,
+      redirect_uri: cfg.auth.redirectUri,
+      code_verifier: verifier,
+    }));
+  }
+
+  async function refreshAccessToken() {
+    if (!heldRefreshToken) throw new Error('no refresh token held');
+    applyTokenResponse(await requestToken({
+      grant_type: 'refresh_token',
+      client_id: cfg.auth.clientId,
+      refresh_token: heldRefreshToken,
+    }));
+  }
+
+  function clearTokens() {
+    accessToken = null;
+    heldRefreshToken = null;
+    accessTokenExpiresAt = 0;
+  }
+
+  async function ensureFreshAccessToken() {
+    if (!accessToken || Date.now() < accessTokenExpiresAt) return;
+    if (!heldRefreshToken) {
+      clearTokens();
+      return;
+    }
+    try {
+      await refreshAccessToken();
+    } catch (refreshError) {
+      clearTokens();
+    }
+  }
+
+  // Helper 3 of 3: the API request helper. Every literal /api/... call in this file
+  // flows through read() or mutate(), which flow through here, so bearer and
+  // idempotency headers can never be forgotten at a call site.
   async function request(path, method, body, idempotencyKey) {
-    const headers = {'content-type': 'application/json'};
-    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
-    const response = await fetch(path, {method, headers, body: body ? JSON.stringify(body) : undefined});
+    const resolvedPath = path.startsWith('/api') ? cfg.apiBaseUrl + path.slice(4) : path;
+    await ensureFreshAccessToken();
+    const attempt = async () => {
+      const headers = {'content-type': 'application/json'};
+      if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+      if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+      return fetch(resolvedPath, {method, headers, body: body ? JSON.stringify(body) : undefined});
+    };
+    let response = await attempt();
+    if (response.status === 401 && heldRefreshToken) {
+      try {
+        await refreshAccessToken();
+        response = await attempt();
+      } catch (refreshError) {
+        clearTokens();
+      }
+    }
+    if (response.status === 401) {
+      clearTokens();
+      const error = new Error('this session has expired; sign in again to continue');
+      error.code = 'authentication_expired';
+      throw error;
+    }
     const payload = await response.json();
     if (!response.ok) {
       const detail = typeof payload.detail === 'string' ? payload.detail : 'the request was rejected';
@@ -517,6 +710,9 @@ textarea,input[type="date"]{width:100%;border:1px solid var(--line-strong);borde
       'This plan changed elsewhere, so it has been reloaded. Review it and choose again.',
     invalid_idempotency_key: (detail) =>
       `The request could not be sent correctly and nothing was applied. ${detail}`,
+    authentication_failed: (detail) => `Sign-in could not be completed. ${detail}`,
+    configuration_error: (detail) =>
+      `AdaptSG could not load its configuration and cannot continue safely. ${detail}`,
   };
 
   function describe(error) {
@@ -551,6 +747,22 @@ textarea,input[type="date"]{width:100%;border:1px solid var(--line-strong);borde
     for (const view of document.querySelectorAll('.view')) view.hidden = view.id !== id;
     if (lastViewId !== id && focus) focus();
     lastViewId = id;
+  }
+
+  function updateHeaderAuthControls() {
+    if ($('sign-out')) $('sign-out').hidden = !(cfg && cfg.auth && accessToken);
+  }
+
+  function configureAuthUI() {
+    if ($('signup')) $('signup').hidden = !(cfg && cfg.auth && cfg.auth.selfSignUpEnabled === true);
+  }
+
+  // The transport-level 401 transition after a failed refresh: distinct from the
+  // typed domain-error codes above, so a caller must not reactivate the landing view
+  // or render a generic transport alert on top of it.
+  function enterSignedOutState() {
+    updateHeaderAuthControls();
+    activateView('view-signedout', () => { if ($('signedout-title')) $('signedout-title').focus(); });
   }
 
   function chip(kind, icon, text) {
@@ -1032,6 +1244,10 @@ textarea,input[type="date"]{width:100%;border:1px solid var(--line-strong);borde
     try {
       await action();
     } catch (error) {
+      if (error.code === 'authentication_expired') {
+        enterSignedOutState();
+        return;
+      }
       // A stale version means someone else moved the journey on. Re-read it so the
       // caregiver decides against what the server actually holds.
       if (error.code === 'stale_journey_version' && journeyId) {
@@ -1089,10 +1305,103 @@ textarea,input[type="date"]{width:100%;border:1px solid var(--line-strong);borde
       lastMonitorSnapshot = outcome.snapshot;
       lastMonitorAt = new Date();
     } catch (error) {
+      if (error.code === 'authentication_expired') {
+        enterSignedOutState();
+        return;
+      }
       monitorFailed = true;
       monitorErrorDetail = error.message;
     }
     if (state) renderJourney(state);
+  }
+
+  // OAuth callback detection and handling. Any of these parameters means the URL is
+  // a return from Cognito, whether the sign-in succeeded, was denied, or is malformed
+  // - so callers must not fall through to the ordinary signed-out or landing paths.
+  function oauthCallbackParams() {
+    const params = new URLSearchParams(location.search);
+    const present = ['code', 'state', 'error', 'error_description', 'error_uri'].some((key) => params.has(key));
+    return present ? params : null;
+  }
+
+  function stripOAuthParamsFromUrl() {
+    const url = new URL(location.href);
+    for (const key of ['code', 'state', 'error', 'error_description', 'error_uri']) {
+      url.searchParams.delete(key);
+    }
+    history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  async function handleAuthCallback(params) {
+    const storedState = sessionStorage.getItem(PKCE_STATE_KEY);
+    const storedVerifier = sessionStorage.getItem(PKCE_VERIFIER_KEY);
+    try {
+      const returnedState = params.get('state');
+      if (!returnedState || !storedState || returnedState !== storedState) {
+        throw new Error('the sign-in response could not be verified; please sign in again');
+      }
+      const oauthError = params.get('error');
+      if (oauthError) {
+        throw new Error(params.get('error_description') || oauthError);
+      }
+      const codes = params.getAll('code').filter((value) => value);
+      if (codes.length !== 1) {
+        throw new Error('the sign-in callback did not include exactly one authorization code');
+      }
+      await exchangeAuthorizationCode(codes[0], storedVerifier);
+    } finally {
+      sessionStorage.removeItem(PKCE_VERIFIER_KEY);
+      sessionStorage.removeItem(PKCE_STATE_KEY);
+      stripOAuthParamsFromUrl();
+    }
+  }
+
+  function bootLanding() {
+    updateHeaderAuthControls();
+    activateView('view-landing', null);
+    read('/api/health').then((data) => {
+      runtimeMode = data.mode;
+      storageMode = data.storage;
+      renderModeBanner(data.mode);
+    }).catch((error) => setAlert(error));
+  }
+
+  async function boot() {
+    try {
+      cfg = await loadRuntimeConfig();
+    } catch (configError) {
+      setAlert({code: 'configuration_error', message: configError.message});
+      return;
+    }
+    configureAuthUI();
+    if (cfg.auth === null) {
+      bootLanding();
+      return;
+    }
+    const callbackParams = oauthCallbackParams();
+    if (callbackParams) {
+      try {
+        await handleAuthCallback(callbackParams);
+        bootLanding();
+      } catch (callbackError) {
+        enterSignedOutState();
+        setAlert({code: 'authentication_failed', message: callbackError.message});
+      }
+      return;
+    }
+    if (!accessToken) {
+      enterSignedOutState();
+      return;
+    }
+    bootLanding();
+  }
+
+  async function signOut() {
+    clearTokens();
+    sessionStorage.removeItem(PKCE_VERIFIER_KEY);
+    sessionStorage.removeItem(PKCE_STATE_KEY);
+    const params = new URLSearchParams({client_id: cfg.auth.clientId, logout_uri: cfg.auth.logoutUri});
+    location.href = `${cfg.auth.logoutEndpoint}?${params.toString()}`;
   }
 
   $('new-trip').onclick = (event) => { event.preventDefault(); resetToLanding(); };
@@ -1102,6 +1411,9 @@ textarea,input[type="date"]{width:100%;border:1px solid var(--line-strong);borde
   $('approve').onclick = () => decide(currentProposal.id, 'approve');
   $('keep').onclick = () => decide(currentProposal.id, 'reject');
   $('check-conditions').onclick = () => checkConditions();
+  $('sign-in').onclick = () => beginSignIn('signin');
+  if ($('signup')) $('signup').onclick = () => beginSignIn('signup');
+  if ($('sign-out')) $('sign-out').onclick = (event) => { event.preventDefault(); signOut(); };
 
   $('create').onclick = async () => {
     clearAlert();
@@ -1120,17 +1432,16 @@ textarea,input[type="date"]{width:100%;border:1px solid var(--line-strong);borde
       );
       renderJourney(result);
     } catch (error) {
+      if (error.code === 'authentication_expired') {
+        enterSignedOutState();
+        return;
+      }
       activateView('view-landing', null);
       setAlert(error);
     }
   };
 
-  activateView('view-landing', null);
-  read('/api/health').then((data) => {
-    runtimeMode = data.mode;
-    storageMode = data.storage;
-    renderModeBanner(data.mode);
-  }).catch((error) => setAlert(error));
+  boot();
 </script>
 </body>
 </html>
