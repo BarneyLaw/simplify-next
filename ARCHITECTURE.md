@@ -10,7 +10,7 @@ The implementation uses one bounded orchestrator, not a swarm. Bedrock interpret
 
 ```mermaid
 flowchart LR
-    U[Caregiver] --> UI[Streamlit UI]
+    U[Caregiver] --> UI[Static browser client]
     UI --> API[AdaptSG service / FastAPI]
     API --> G[Bounded LangGraph]
     G --> P[Preference parser]
@@ -106,7 +106,7 @@ The curated catalog is demonstration data, not an official accessibility registr
 ```mermaid
 flowchart TB
     subgraph Local[Local / container]
-      ST[Streamlit :8501] --> CORE[Python core]
+      SC[Static client :8000] --> CORE[Python core]
     end
     subgraph AWS[AWS serverless mode]
       CI[GitHub OIDC CI/CD] --> WB[Private S3 web bucket]
@@ -124,9 +124,11 @@ flowchart TB
     end
 ```
 
-Streamlit remains the local/container interface because it requires a persistent Python process and
-WebSocket session; it cannot be exported as a static site. The AWS browser interface is a separate
-static client supplied by Role 3 and published from `public/` by CI.
+`public/index.html` is the one client, with no build step: `uvicorn adaptsg.web_api:app` serves it
+same-origin with the API locally and in the container, and CI publishes the same directory to
+CloudFront on AWS. It authenticates with Cognito Managed Login via OAuth authorization-code/PKCE
+when `/runtime-config.json` declares `auth`, and falls back to the local no-auth demo when that
+file is absent (a plain `404`, expected only outside AWS).
 
 The AWS SAM template uses CloudFront with private S3 Origin Access Control, a Cognito-scoped HTTP
 API, an operations-only `AWS_IAM` Function URL, exact-origin CORS, reserved concurrency, on-demand
@@ -150,7 +152,9 @@ Implemented:
 
 Remaining production hardening:
 
-- implement the static browser OAuth/PKCE controls against `/runtime-config.json` (Role 3 handoff);
+- derive deployed identity from API Gateway's verified Cognito `sub` instead of the fixed
+  `demo-caregiver` principal (blocking Role 1/4 handoff; see
+  `docs/contracts/production-readiness-handoffs.md`);
 - define per-user authorization and deletion/retention policy beyond the current TTL;
 - add an independent runtime switch for live Singapore providers without attempting Bedrock;
 - wire alarm actions to an approved notification target.
