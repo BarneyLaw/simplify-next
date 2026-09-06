@@ -338,7 +338,7 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
             if record
             else resolved_service.consent_policy_version or None,
             consent_id=record.id if record else None,
-            categories=record.data_categories if record else frozenset(),
+            categories=record.data_categories if record else resolved_service.consent_categories,
         )
 
     @app.get("/api/v1/consents/{consent_id}", response_model=ConsentRecord)
