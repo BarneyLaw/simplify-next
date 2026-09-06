@@ -74,7 +74,7 @@ from adaptsg.errors import (
     ToolUnavailable,
 )
 from adaptsg.planning import JourneyPlanner, JourneyReplanner
-from adaptsg.preference_parser import DeterministicPreferenceParser
+from adaptsg.preference_parser import BedrockPreferenceParser, DeterministicPreferenceParser
 from adaptsg.presentation import itinerary_rows, retained_segment_percentage
 from adaptsg.settings import Settings
 from adaptsg.tools.catalog import VenueCatalog
@@ -102,6 +102,23 @@ def test_local_live_mode_uses_live_providers_with_demo_auth() -> None:
     assert service.mode == "live"
     assert service.auth_mode == "demo"
     assert service.local_live
+
+
+def test_default_service_never_falls_back_from_bedrock_in_live_mode() -> None:
+    service = build_service(
+        Settings(
+            _env_file=None,
+            adaptsg_mode="live",
+            adaptsg_provider_mode="live",
+            adaptsg_local_live_enabled=True,
+            adaptsg_bedrock_enabled=True,
+            onemap_api_token="test-onemap-token",
+            lta_account_key="test-lta-key",
+        )
+    )
+
+    assert isinstance(service.parser, BedrockPreferenceParser)
+    assert not service.parser.allow_fallback
 
 
 def test_cognito_auth_is_independent_from_deterministic_providers() -> None:
