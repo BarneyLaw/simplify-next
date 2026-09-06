@@ -28,7 +28,9 @@ class Settings(BaseSettings):
     adaptsg_llm_provider: Literal["bedrock", "lmstudio"] = "bedrock"
     lmstudio_base_url: str = "http://localhost:1234/v1"
     lmstudio_model_id: str = "local-model"
-    lmstudio_max_tokens: int = Field(default=1_200, ge=128, le=4_096)
+    # A local endpoint bills no tokens, and reasoning models spend most of this budget thinking
+    # before they emit any JSON, so the ceiling is far above the Bedrock one but still bounded.
+    lmstudio_max_tokens: int = Field(default=1_200, ge=128, le=32_768)
     # Local models on CPU are slow to first token, so this is far longer than the 8s tool timeout.
     lmstudio_timeout_seconds: float = Field(default=60, gt=0)
     adaptsg_approval_cost_increase_sgd: float = Field(default=8, ge=0)

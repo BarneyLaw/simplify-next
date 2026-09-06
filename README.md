@@ -106,7 +106,7 @@ Copy `.env.example` to `.env`. `.env` is ignored by Git.
 | `ADAPTSG_LLM_PROVIDER` | `bedrock` | Live-mode extraction provider: `bedrock` or `lmstudio` |
 | `LMSTUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible server |
 | `LMSTUDIO_MODEL_ID` | `local-model` | Model identifier loaded in LM Studio |
-| `LMSTUDIO_MAX_TOKENS` | `1200` | Response cap for local extraction |
+| `LMSTUDIO_MAX_TOKENS` | `1200` | Response cap for local extraction; up to `32768` for reasoning models |
 | `LMSTUDIO_TIMEOUT_SECONDS` | `60` | Local models are slow to first token |
 | `AWS_REGION` | `us-east-1` | Bedrock region used by this hackathon account |
 | `AWS_PROFILE` | empty | Preferred local AWS CLI/SSO profile |
@@ -178,6 +178,9 @@ about 1400 reasoning tokens and 106 seconds for one extraction, so raise both ce
 ```sh
 LMSTUDIO_MAX_TOKENS=4096 LMSTUDIO_TIMEOUT_SECONDS=600
 ```
+
+`LMSTUDIO_MAX_TOKENS` accepts up to `32768`, well above the Bedrock cap, because a local endpoint
+bills no tokens and a verbose reasoning model can need several thousand before its first brace.
 
 Non-reasoning instruct models work at the defaults and answer in a few seconds.
 

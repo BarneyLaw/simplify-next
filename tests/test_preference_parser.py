@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 import pytest
 from botocore.exceptions import ClientError
+from pydantic import ValidationError
 
 from adaptsg.agent import build_service
 from adaptsg.preference_parser import (
@@ -303,6 +304,12 @@ def test_lmstudio_demo_mode_never_calls_the_local_server() -> None:
 def test_lmstudio_builds_its_own_client_when_none_is_injected() -> None:
     parser = LMStudioPreferenceParser(settings=lmstudio_settings(), catalog=VenueCatalog())
     assert parser._http_client().timeout.read == 60
+
+
+def test_lmstudio_token_budget_is_bounded_but_fits_reasoning_models() -> None:
+    assert lmstudio_settings(lmstudio_max_tokens=32_768).lmstudio_max_tokens == 32_768
+    with pytest.raises(ValidationError):
+        lmstudio_settings(lmstudio_max_tokens=32_769)
 
 
 def test_build_service_defaults_to_the_bedrock_parser() -> None:
