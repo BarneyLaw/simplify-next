@@ -151,11 +151,11 @@ def _principal(request: Request, *, mode: str) -> PrincipalContext:
         raise AuthenticationRequired("API Gateway JWT claims are required")
     subject = claims.get("sub")
     issuer = claims.get("iss")
-    audience = claims.get("aud")
+    audience = claims.get("aud") or claims.get("client_id")
     if not isinstance(subject, str) or not subject or not isinstance(issuer, str):
         raise AuthenticationRequired("verified subject and issuer claims are required")
     if audience is None:
-        raise AuthenticationRequired("verified audience claim is required")
+        raise AuthenticationRequired("verified audience or client_id claim is required")
     return PrincipalContext(
         principal_id=subject,
         account_id=subject,
@@ -410,7 +410,7 @@ def create_app(service: AdaptSGService | None = None) -> FastAPI:
         response_model=tuple[AuditEvent, ...],
     )
     def journey_audit_events(journey_id: UUID, request: Request) -> tuple[AuditEvent, ...]:
-        principal = _principal(request, mode=resolved_service.mode)
+        principal = _principal(request, mode=resolved_service.auth_mode)
         resolved_service.authorization.require(principal, Capability.AUDIT_READ)
         state = resolved_service.get_journey(journey_id, principal=principal)
         return resolved_service.audit.list(correlation_id=state.journey_id)

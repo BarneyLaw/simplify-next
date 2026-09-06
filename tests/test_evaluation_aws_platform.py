@@ -78,6 +78,7 @@ def test_sam_stack_defaults_to_token_free_private_durable_resources() -> None:
     template = (REPOSITORY_ROOT / "infra" / "aws" / "template.yaml").read_text(encoding="utf-8")
     assert "Default: DISABLED" in template
     assert "ADAPTSG_MODE: !Ref ApplicationMode" in template
+    assert "ADAPTSG_PROVIDER_MODE: !Ref ApplicationMode" in template
     assert 'ADAPTSG_BEDROCK_ENABLED: !If [BedrockInferenceEnabled, "true", "false"]' in template
     assert "foundation-model/*" not in template
     assert "Resource: !Ref BedrockModelArns" in template

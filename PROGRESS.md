@@ -4,13 +4,13 @@ Last updated: 2026-09-06 (Asia/Singapore)
 
 ## Current status
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. Main run `34013996057` deployed commit `193c7eb` successfully. Bedrock remains disabled. The deployed demo still maps every authenticated request to the fixed `demo-caregiver` principal, so the static authentication handoff stays "browser implemented; deployed identity acceptance blocked" until Roles 1 and 4 land the identity/provider separation in `docs/contracts/production-readiness-handoffs.md`.
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. Main run `34013996057` deployed commit `193c7eb` successfully. Bedrock remains disabled. The Role 1 correction for the deployed fixed `demo-caregiver` identity is implemented and locally tested on `feature/r1-auth-provider-separation`; deployed acceptance remains pending merge and deployment.
 
 The deployed demo passed all 22 read-only AWS posture checks on 2026-09-06. The bootstrap stack
 is updated so CI can repeat those checks after each deployment without access to application
 records, Cognito users, provider secrets, or Lambda environment values. Authenticated multi-user
-ownership remains blocked by the Role 1 independent-mode contract: deterministic provider mode
-currently selects the fixed `demo-caregiver` principal even after API Gateway validates Cognito.
+ownership remains blocked in the deployed revision until the Role 1 independent-mode correction is
+merged and deployed.
 
 ## Completed milestones
 
@@ -102,7 +102,7 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 - [x] Add local CloudFormation schema lint plus rollback-safe table protection controls.
 - [x] Add explicit OAuth-scoped API routes, privacy-safe API access logs and edge throttling on the Role 4 recovery branch.
 - [x] Add a read-only post-deploy verifier and apply its scoped GitHub role permissions; live demo passed 22/22 checks.
-- [ ] Complete the production-readiness handoffs in `docs/contracts/production-readiness-handoffs.md`.
+- [ ] Complete the remaining production-readiness handoffs in `docs/contracts/production-readiness-handoffs.md`.
 
 ## Current feature branches and merges
 
@@ -141,8 +141,8 @@ The repository keeps each feature boundary visible and uses incremental commits.
 6. Obtain the required review for AdaptSG PR #9; all CI checks are passing.
 7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
 8. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
-9. Have Roles 1 and 4 derive deployed identity from the verified Cognito `sub` instead of the fixed
-   `demo-caregiver` principal (see `docs/contracts/production-readiness-handoffs.md`).
+9. Merge and deploy `feature/r1-auth-provider-separation`, then verify the API derives identity
+   from the verified Cognito `sub` instead of the fixed `demo-caregiver` principal.
 10. Exercise Cognito signup, email verification, login, protected API access, and logout in two browsers,
     and confirm one authenticated principal cannot read another's journey.
 11. Check current account spending and the hackathon threshold in the Billing console; the workshop

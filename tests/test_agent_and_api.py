@@ -84,6 +84,7 @@ def test_local_live_mode_uses_live_providers_with_demo_auth() -> None:
     service = build_service(
         Settings(
             adaptsg_mode="live",
+            adaptsg_provider_mode="live",
             adaptsg_local_live_enabled=True,
             onemap_api_token="test-onemap-token",
             lta_account_key="test-lta-key",
@@ -92,6 +93,19 @@ def test_local_live_mode_uses_live_providers_with_demo_auth() -> None:
     assert service.mode == "live"
     assert service.auth_mode == "demo"
     assert service.local_live
+
+
+def test_cognito_auth_is_independent_from_deterministic_providers() -> None:
+    service = build_service(
+        Settings(
+            adaptsg_mode="demo",
+            adaptsg_provider_mode="demo",
+            adaptsg_authentication_mode="cognito",
+        )
+    )
+    assert service.mode == "demo"
+    assert service.auth_mode == "cognito"
+    assert isinstance(service.parser, DeterministicPreferenceParser)
 
 
 def test_phase_two_models_reject_unknown_fields_and_prohibited_risk_is_typed() -> None:
@@ -305,6 +319,7 @@ def make_service(
     store: JourneyStore | None = None,
     clock: Any | None = None,
     ttl_hours: int = 24,
+    auth_mode: str = "demo",
 ) -> AdaptSGService:
     return AdaptSGService(
         parser=DeterministicPreferenceParser(VenueCatalog()),
@@ -315,6 +330,7 @@ def make_service(
         store=store,
         clock=clock,
         ttl_hours=ttl_hours,
+        auth_mode=auth_mode,
     )
 
 
@@ -1051,12 +1067,15 @@ def test_api_ignores_spoofed_identity_headers(
 def test_live_api_requires_gateway_claims(
     planner: JourneyPlanner, replanner: JourneyReplanner
 ) -> None:
-    service = make_service(planner, replanner)
-    service.mode = "live"
+    service = make_service(planner, replanner, auth_mode="cognito")
     client = TestClient(create_app(service))
     response = client.post(
         "/api/journeys",
-        headers={"Idempotency-Key": "live-claims-key"},
+        headers={
+            "Idempotency-Key": "live-claims-key",
+            "X-Principal-ID": "spoofed-caregiver",
+            "X-Principal-Roles": "caregiver",
+        },
         json={"prompt": "Plan a safe day.", "journey_date": "2026-09-02"},
     )
     assert response.status_code == 401
@@ -1087,6 +1106,31 @@ def test_live_principal_adapter_reads_only_gateway_claims() -> None:
     assert principal.principal_id == "cognito-sub"
     assert principal.account_id == "cognito-sub"
     assert principal.is_caregiver
+
+
+def test_cognito_access_token_client_id_is_accepted() -> None:
+    from starlette.requests import Request
+
+    request = Request(
+        {
+            "type": "http",
+            "aws.event": {
+                "requestContext": {
+                    "authorizer": {
+                        "jwt": {
+                            "claims": {
+                                "sub": "access-token-sub",
+                                "iss": "https://issuer.example",
+                                "client_id": "public-client",
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    )
+    principal = web_api._principal(request, mode="cognito")
+    assert principal.principal_id == "access-token-sub"
 
 
 def test_action_intent_route_binds_decision(

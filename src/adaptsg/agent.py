@@ -64,7 +64,11 @@ from adaptsg.errors import (
     ToolUnavailable,
 )
 from adaptsg.planning import JourneyPlanner, JourneyReplanner
-from adaptsg.preference_parser import BedrockPreferenceParser, PreferenceParser
+from adaptsg.preference_parser import (
+    BedrockPreferenceParser,
+    DeterministicPreferenceParser,
+    PreferenceParser,
+)
 from adaptsg.settings import Settings, get_settings
 from adaptsg.tools.catalog import VenueCatalog
 from adaptsg.tools.environment import (
@@ -661,6 +665,7 @@ class AdaptSGService:
         store: JourneyStore | None = None,
         ttl_hours: int = 24,
         mode: str = "demo",
+        auth_mode: str = "demo",
         local_live: bool = False,
         clock: Clock | None = None,
         policy: CapabilityResolver | None = None,
@@ -677,6 +682,7 @@ class AdaptSGService:
         self.store = store or InMemoryJourneyStore(clock=self._clock)
         self.ttl = timedelta(hours=ttl_hours)
         self.mode = mode
+        self._auth_mode = auth_mode
         self.local_live = local_live
         self.policy = policy or CapabilityResolver()
         self.audit = audit or InMemoryAuditStore()
@@ -697,7 +703,7 @@ class AdaptSGService:
 
     @property
     def auth_mode(self) -> str:
-        return "demo" if self.local_live else self.mode
+        return self._auth_mode
 
     def _build_plan_graph(self) -> object:
         graph = StateGraph(PlanGraphState)
@@ -1386,12 +1392,12 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
     validator = ItineraryValidator(max_replans=resolved.adaptsg_max_replans)
     location = (
         DemoLocationClient()
-        if resolved.adaptsg_mode == "demo"
+        if resolved.adaptsg_provider_mode == "demo"
         else OneMapLocationClient(token=resolved.onemap_api_token or "")
     )
     routing = (
         DemoRoutingClient()
-        if resolved.adaptsg_mode == "demo"
+        if resolved.adaptsg_provider_mode == "demo"
         else OneMapRoutingClient(
             token=resolved.onemap_api_token or "",
             bfa_enabled=resolved.onemap_bfa_enabled,
@@ -1399,7 +1405,7 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
     )
     environment: EnvironmentClient = (
         DemoEnvironmentClient()
-        if resolved.adaptsg_mode == "demo"
+        if resolved.adaptsg_provider_mode == "demo"
         else LiveEnvironmentClient(
             catalog=catalog,
             lta_account_key=resolved.lta_account_key or "",
@@ -1416,7 +1422,11 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
         approval_cost_increase_sgd=resolved.adaptsg_approval_cost_increase_sgd,
         max_replans=resolved.adaptsg_max_replans,
     )
-    parser = BedrockPreferenceParser(settings=resolved, catalog=catalog)
+    parser: PreferenceParser = (
+        BedrockPreferenceParser(settings=resolved, catalog=catalog)
+        if resolved.adaptsg_bedrock_enabled
+        else DeterministicPreferenceParser(catalog)
+    )
     store: JourneyStore
     if resolved.adaptsg_journeys_table:
         session = boto3.Session(
@@ -1438,6 +1448,7 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
         store=store,
         ttl_hours=resolved.adaptsg_journey_ttl_hours,
         mode=resolved.adaptsg_mode,
+        auth_mode=resolved.adaptsg_authentication_mode,
         local_live=resolved.adaptsg_local_live_enabled,
         policy=policy,
         consent_policy_version=resolved.adaptsg_consent_policy_version or None,
