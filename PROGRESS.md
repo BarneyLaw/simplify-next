@@ -1,6 +1,6 @@
 # AdaptSG Progress
 
-Last updated: 2026-09-06 (Asia/Singapore)
+Last updated: 2026-09-07 (Asia/Singapore)
 
 ## Current status
 
@@ -22,6 +22,13 @@ inference profile, capped at 256 output tokens. A deployed end-to-end canary has
 OneMap, deterministic validation, DynamoDB persistence, scoped approval and live monitoring. Manual
 two-browser owner-isolation and a complete authenticated browser rehearsal remain acceptance work.
 
+Prompt handling no longer inherits the training itinerary. Bedrock now returns a forced typed tool
+payload, malformed live extraction fails closed, ordinary venue mentions remain soft preferences,
+and unknown destinations produce `NoFeasibleItinerary`. Deterministic planning consumes exact venue
+and category preferences, explores bounded lunch-first and smaller candidates without dropping
+required venues, and still passes every result through `ItineraryValidator`. A live matrix of nine
+supported prompts produced distinct valid schedules; the unsupported Singapore Zoo case was rejected.
+
 The deployed demo passed all 24 read-only AWS posture checks on 2026-09-06. The bootstrap stack
 is updated so CI can repeat those checks after each deployment without access to application
 records, Cognito users, provider secrets, or Lambda environment values. Authenticated multi-user
@@ -37,6 +44,8 @@ still required before making the final multi-user acceptance claim.
 - [x] Added OneMap routing and optional approved BFA integration.
 - [x] Added data.gov.sg weather/PSI plus LTA/PUB alert integration.
 - [x] Added Bedrock Converse preference extraction and token accounting.
+- [x] Removed training-itinerary defaults from prompt extraction and made deterministic venue
+      selection honor typed venue/category preferences.
 - [x] Added a bounded LangGraph planning flow.
 - [x] Added deterministic validation for accessibility, walking, time, lunch, rest, budget, opening hours, provenance and loop limits.
 - [x] Added minimal-change replanning and caregiver cost approval.
@@ -102,6 +111,7 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | Live-provider journey canary | Partial / safe failure | Qualified origin `Toa Payoh MRT Station (NS19)` resolved uniquely; a validated fallback draft used fresh non-fixture OneMap drive routes, persisted in DynamoDB, required a scoped action intent, activated at version 2, and monitoring returned non-fixture `data.gov.sg_weather_psi+lta_pub_flood_train` provenance with no triggers. A later OneMap request received HTTP 429 and failed closed with `tool_unavailable`. |
 | Live US Bedrock readiness | Passed | Direct `us-east-1` Converse through `us.anthropic.claude-haiku-4-5-20251001-v1:0` succeeded (11 input / 5 output tokens), and the deployed Lambda canary used the same profile (807 input / 256 output tokens). No Marketplace subscription step was required. |
 | Current Python 3.12 application gate | Passed with known local audit limitation | 203 tests passed with 90.57% branch coverage; Ruff, strict mypy, Bandit, CloudFormation lint and browser gates passed. The portable Windows interpreter still lacks `venv.EnvBuilder` for local `pip-audit`; Linux main run `34037008396` passed the audit. |
+| Prompt-regression gate | Passed | PRs #53, #55 and #56 passed Linux correctness, dependency audit, Docker and SAM checks. Windows Python 3.12 ran 252 tests at 91.22% branch coverage; its portable interpreter still lacks `venv.EnvBuilder` for local `pip-audit`. Live US Haiku extraction plus deterministic planning produced valid distinct schedules for all nine supported matrix prompts, while Singapore Zoo failed closed as unsupported. |
 | US Bedrock/live-provider E2E canary | Passed | PR #50 preserved the exact `Toa Payoh MRT Station (NS19)` origin after Bedrock extraction. The deployed draft used three fresh non-fixture OneMap drive routes, cost $55.73, satisfied the 400 m walking/$70 budget/accessibility constraints, persisted to DynamoDB, required a scoped action intent, activated at version 2, and returned non-fixture `data.gov.sg_weather_psi+lta_pub_flood_train` monitoring (PSI 89, Fair, no triggers). |
 | Windows-local Python 3.12 gate | Platform discrepancy | 172 tests passed with 90.77% branch coverage on `feature/r4-cost-alerting`; the portable Python distribution lacks the standard-library `venv.EnvBuilder`, so local `pip-audit` cannot start, while the Linux main gate passes dependency audit |
 | Durable trust/location deployment | Passed | PR #36 merged at `e599875`; main run `34022280410` deployed and verified it successfully |
@@ -170,6 +180,9 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-us-bedrock-deployment` | Deploy exact-resource access for the US Haiku 4.5 cross-region inference profile and verify the independent runtime region | Merged in PR #49; main run `34036188634` passed 24/24 posture checks |
 | `feature/r1-preserve-explicit-origin` | Preserve qualified user-supplied origins after Bedrock extraction so live location verification remains unambiguous | Merged in PR #50; main run `34037008396` deployed successfully |
 | `feature/origin-resolution-and-mode-banner` | Normalising query ladder for start locations, a candidate chooser for origins that cannot be pinned to one place, and removal of the standing Live/Demo banner | In review |
+| `feature/r1-prompt-extraction-integrity` | Forced typed Bedrock extraction, deterministic reconciliation and fail-closed unsupported destinations | Merged in PR #53 |
+| `feature/r2-prompt-aware-selection` | Deterministic venue/category selection plus bounded safe order and optional-stop candidates | Merged in PR #55 |
+| `feature/r1-afternoon-lunch-default` | Preserve explicit lunch deadlines and disclose feasible defaults for afternoon starts | Merged in PR #56 |
 
 ## External setup still required
 
