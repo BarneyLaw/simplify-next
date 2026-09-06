@@ -9,7 +9,15 @@ records. Its internal Lambda/DynamoDB smoke emulates API Gateway's post-authoriz
 while a separate real API Gateway assertion still verifies that an unsigned protected request
 receives `401`.
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. Bedrock has exact-resource invoke permission and a 256-output-token cap, while routing and environmental providers remain deterministic. No deployment inference request was made. The Role 1 identity/provider separation, Role 3 AWS browser metadata and corrected deployment smoke are merged, deployed and passing. Manual two-browser owner-isolation and one controlled Bedrock canary remain.
+Starter codebase complete and locally verified. A Kubernetes development environment is running
+through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped
+HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and
+alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with
+private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth
+configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. The stack now
+runs in `live` mode with OneMap/LTA/data.gov.sg credentials supplied by Secrets Manager and exact-resource
+Bedrock access to the regional Claude 3 Haiku model, capped at 256 output tokens. Manual two-browser
+owner-isolation and a complete authenticated browser rehearsal remain acceptance work.
 
 The deployed demo passed all 23 read-only AWS posture checks on 2026-09-06. The bootstrap stack
 is updated so CI can repeat those checks after each deployment without access to application
@@ -85,13 +93,16 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | AWS alarm-notification bootstrap | Passed | `adaptsg-cicd-bootstrap` reached `UPDATE_COMPLETE`; the execution role can manage only `adaptsg-demo-operations-alarms`, and the GitHub deploy role has read-only attributes access to that topic |
 | Current Python 3.12 CI gate | Passed | Branch run `34012492178` passed correctness, the 90% coverage threshold, dependency audit, Docker build and SAM validate/build; deployment was correctly skipped outside `main` |
 | Latest merged AWS/browser deployment | Passed | Main workflow-dispatch run `34024320223` passed correctness, Docker, SAM, connected configuration deployment, static publishing and 23/23 post-deploy checks at commit `1a2bec4`; no inference smoke ran |
+| Live-provider AWS/browser deployment | Passed | Main run `34030441378` deployed commit `e5c2af1` in `live` mode, published the polished login page, verified public health and the unsigned `401` boundary, and passed 23/23 posture checks |
+| OneMap credential and typed adapters | Passed live | Search returned five Toa Payoh candidates and one Gardens by the Bay candidate; walking routing returned fresh non-fixture provenance (`onemap_walk+transport_cost_policy_v1`), 76 minutes and 6,271 m |
+| Controlled Bedrock canary | Passed | One regional Claude 3 Haiku inference used 783 input and 256 output tokens; deterministic validation passed before the journey was accepted, and DynamoDB/action-intent/approval/monitor readback passed |
 | Windows-local Python 3.12 gate | Platform discrepancy | 172 tests passed with 90.77% branch coverage on `feature/r4-cost-alerting`; the portable Python distribution lacks the standard-library `venv.EnvBuilder`, so local `pip-audit` cannot start, while the Linux main gate passes dependency audit |
 | Durable trust/location deployment | Passed | PR #36 merged at `e599875`; main run `34022280410` deployed and verified it successfully |
 | Configurable Bedrock rollout branch | 192 tests passed | Python 3.12.10, 90.43% branch coverage; Ruff, strict mypy, Bandit, CloudFormation/SAM lint, workflow YAML and 19 browser-auth tests passed locally; Windows lacks `make` for the custom SAM build and its portable Python still cannot start `pip-audit`, so Linux CI remains authoritative for those two gates |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
 | LAN DNS/TLS/health | Passed | `sim-next.lab.packetcraft.dev` -> `192.168.1.250`; trusted HTTPS 200 |
-| Browser visual/session QA | Blocked | No in-app or extension browser connected in this session |
+| Browser visual/session QA | Partial | Desktop and narrow-viewport headless Chrome checks passed for the polished signed-out page; independent authenticated browser sessions remain |
 
 ## Production trust foundations in progress
 
@@ -142,24 +153,22 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-authenticated-lambda-smoke` | Cognito-aware direct-Lambda smoke plus real unsigned API rejection assertion | Merged in PR #35; deployment passes |
 | `feature/r1-durable-trust-records` | Durable consent/grants/intents, atomic per-journey audit and strict location ambiguity handling | Merged in PR #36; main run `34022280410` deployed successfully |
 | `feature/r4-configurable-bedrock-rollout` | Exact-resource Bedrock rollout variables, capped output, manual deployment trigger, connected-state verification and token-safe smoke behavior | Merged in PR #37; workflow-dispatch run `34024320223` deployed successfully and passed 23/23 posture checks with Bedrock `CONNECTED`; inference smoke was intentionally skipped |
+| `feature/r4-live-provider-deployment` | Protected-environment switch between deterministic and live providers, including fail-closed secret requirements and live-aware deployment verification | Merged in PR #40 |
+| `feature/r3-login-page-polish` | Responsive signed-out welcome/access layout with unavailable navigation and unresolved provenance hidden | Merged in PR #41; main run `34030441378` deployed successfully |
 
 ## External setup still required
 
-1. Request and verify OneMap API token access.
-2. Request SLA approval for BFA routing before setting `ONEMAP_BFA_ENABLED=true`.
-3. Request an LTA DataMall account key.
-4. Complete Anthropic model access if required, verify the Claude Haiku 4.5 global inference profile
-   from `ap-southeast-1`, then run one controlled browser canary and inspect Bedrock token metrics.
-5. Refresh hackathon AWS session credentials immediately before the live demo.
-6. Obtain the required review for AdaptSG PR #9; all CI checks are passing.
-7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
-8. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
-9. Exercise Cognito signup, email verification, login, protected API access, and logout in two browsers,
+1. Request SLA approval for BFA routing before setting `ONEMAP_BFA_ENABLED=true`.
+2. Refresh hackathon AWS session credentials immediately before the live demo.
+3. Obtain the required review for AdaptSG PR #9; all CI checks are passing.
+4. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
+5. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
+6. Exercise Cognito signup, email verification, login, protected API access, and logout in two browsers,
     and confirm one authenticated principal cannot read another's journey.
-10. Check current account spending and the hackathon threshold in the Billing console; the workshop
+7. Check current account spending and the hackathon threshold in the Billing console; the workshop
     organization explicitly denies Cost Explorer API access, and the application stack does not request
     account-level billing-management permissions.
-11. If operational email alerts are desired, set `ADAPTSG_ALARM_NOTIFICATION_EMAIL` and confirm the
+8. If operational email alerts are desired, set `ADAPTSG_ALARM_NOTIFICATION_EMAIL` and confirm the
     SNS subscription.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
@@ -277,7 +286,8 @@ with the provider, and the first is the `.env` issue above rather than a defect.
 - **Curated venues:** reliability and unsupported-claim prevention outweigh catalog breadth in the MVP.
 - **Smallest change:** candidate scoring heavily penalizes changed segments before cost/walking tie-breakers.
 - **AWS-only web delivery:** Streamlit is retired, not retained as a local interface. `public/index.html` is the one client, served same-origin by FastAPI locally and in Docker; CloudFront serves the same directory from private S3 and proxies `/api/*` to API Gateway on AWS.
-- **Serverless AWS:** Lambda, DynamoDB on demand and optional Bedrock avoid always-on compute; Bedrock permission is disabled during the token-constrained phase.
+- **Serverless AWS:** Lambda, DynamoDB on demand and exact-resource Bedrock access avoid always-on
+  compute; live deployment uses the verified regional Claude 3 Haiku model with a 256-token output cap.
 - **Demo/live separation:** deterministic adapters keep CI and the recorded story reproducible while live adapters remain independently testable.
 
 ## How to update this file
