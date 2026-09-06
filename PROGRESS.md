@@ -74,7 +74,7 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | AWS authenticated v2 deployment | Passed | `adaptsg-demo` reached `UPDATE_COMPLETE`; main run `33972607910` passed token-free smoke and public/protected route checks |
 | AWS static web deployment | Passed | `adaptsg-demo` reached `UPDATE_COMPLETE`; main run `33976769643` passed CloudFront page/runtime-config/same-origin API smoke; Cognito callback and logout URLs target CloudFront; Bedrock output is `DISABLED` |
 | AWS deployment posture | 22/22 passed | Live read-only verification in `ap-southeast-1`; private/versioned/encrypted S3, signed CloudFront origin, HTTPS and uncached API path, API metrics/logs/throttles, encrypted DynamoDB TTL, public Cognito PKCE client, and Bedrock disabled |
-| Current Python 3.12 full gate | Blocked outside Role 4 change | 177/178 tests passed with 90.46% branch coverage; `tests/test_ui_streamlit_app.py::test_creating_a_plan_shows_the_locked_constraints_and_the_itinerary` failed in the Role 3 Streamlit boundary because rendered HTML was blank |
+| Current Python 3.12 full gate | Blocked outside Role 4 change | After merging current `main`, 191/192 tests passed with 89.88% branch coverage; `tests/test_ui_streamlit_app.py::test_creating_a_plan_shows_the_locked_constraints_and_the_itinerary` failed in the Role 3 Streamlit boundary because rendered HTML was blank |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
 | LAN DNS/TLS/health | Passed | `sim-next.lab.packetcraft.dev` -> `192.168.1.250`; trusted HTTPS 200 |
@@ -119,7 +119,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-aws-recovery-hardening` | API Gateway deployment permission, rollback-safe DynamoDB protection and local CloudFormation lint | Merged; second deployment rolled back at access-log activation |
 | `feature/r4-api-log-delivery-permissions` | CloudWatch Logs delivery permissions required by authenticated HTTP API access logging | Merged in PR #24; bootstrap and application deployment passed |
 | `feature/r4-aws-web-hosting` | CloudFront/private-S3 static hosting, same-origin API, Cognito self-signup, PKCE runtime contract and CI publishing | Merged in PR #25 and deployed; main run `33976769643` passed all checks and AWS smoke tests |
-| `feature/r4-deployment-posture` | Read-only live verification for token-free AWS security and service wiring | In progress; bootstrap update `UPDATE_COMPLETE`, live stack passed 22/22 checks; local Role 4 checks pass, full gate blocked by one Role 3 Streamlit assertion |
+| `feature/r4-deployment-posture` | Read-only live verification for token-free AWS security and service wiring | In progress; bootstrap update `UPDATE_COMPLETE`, live stack passed 22/22 checks; local Role 4 checks pass, current-main full gate is blocked by one Role 3 Streamlit assertion and 89.88% aggregate coverage |
 
 ## External setup still required
 
