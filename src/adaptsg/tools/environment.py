@@ -23,6 +23,7 @@ from adaptsg.tools.freshness import (
     failed_result,
     successful_result,
 )
+from adaptsg.tools.redaction import redact_secrets
 from adaptsg.tools.routing import distance_metres
 
 LOGGER = logging.getLogger(__name__)
@@ -123,7 +124,9 @@ class LiveEnvironmentClient:
             flood_venues = self._flood_venues(floods)
             disruptions = self._train_disruptions(train)
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
-            raise ToolUnavailable(f"live environment verification failed: {exc}") from exc
+            raise ToolUnavailable(
+                f"live environment verification failed: {redact_secrets(str(exc))}"
+            ) from exc
 
         return EnvironmentSnapshot(
             weather_summary=weather_summary,

@@ -11,6 +11,7 @@ from adaptsg.domain import Location, LocationSearchResult, ToolResult
 from adaptsg.errors import ToolUnavailable
 from adaptsg.tools.freshness import FreshnessKind, failed_result, successful_result
 from adaptsg.tools.origin import DEFAULT_ORIGIN_LABEL, DEFAULT_ORIGIN_LOCATION
+from adaptsg.tools.redaction import redact_secrets
 
 
 class LocationClient(Protocol):
@@ -96,7 +97,9 @@ class OneMapLocationClient:
                 for item in results
             )
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise ToolUnavailable(f"OneMap location verification failed: {exc}") from exc
+            raise ToolUnavailable(
+                f"OneMap location verification failed: {redact_secrets(str(exc))}"
+            ) from exc
 
     def search_result(self, query: str) -> ToolResult[tuple[LocationSearchResult, ...]]:
         try:

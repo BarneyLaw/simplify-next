@@ -27,6 +27,7 @@ from adaptsg.tools.origin import (
     origin_query_variants,
     rank_origin_candidates,
 )
+from adaptsg.tools.redaction import REDACTED, redact_secrets
 from adaptsg.tools.routing import DemoRoutingClient, OneMapRoutingClient, distance_metres
 
 SGT = ZoneInfo("Asia/Singapore")
@@ -568,3 +569,33 @@ def test_is_confident_accepts_one_station_but_not_two_places() -> None:
     )
     assert is_confident("Orchard", different_places) is False
     assert is_confident("Orchard", ()) is False
+
+
+def test_provider_errors_never_carry_the_credential() -> None:
+    """The 503 detail reaches the browser, so a leaked token would be published."""
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(429, json={}))
+    )
+    with pytest.raises(ToolUnavailable) as error:
+        OneMapLocationClient(token="SUPER-SECRET-TOKEN", client=client).search("Bishan")
+
+    assert "SUPER-SECRET-TOKEN" not in str(error.value)
+    assert REDACTED in str(error.value)
+    # The rest of the message stays useful for diagnosis.
+    assert "429" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("text", "leaked"),
+    [
+        ("https://x/api?token=abc123&pageNum=1", "abc123"),
+        ("https://x/api?api_key=abc123", "abc123"),
+        ("https://x/api?AccountKey=abc123", "abc123"),
+    ],
+)
+def test_redact_secrets_covers_the_credential_parameter_names_in_use(
+    text: str, leaked: str
+) -> None:
+    redacted = redact_secrets(text)
+    assert leaked not in redacted
+    assert REDACTED in redacted

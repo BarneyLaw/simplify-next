@@ -27,6 +27,20 @@ from adaptsg.tools.origin import DEFAULT_ORIGIN_LABEL, is_vague_origin
 
 LOGGER = logging.getLogger(__name__)
 
+DEFAULTED_ORIGIN_WARNING = (
+    f"No starting point was named, so the day is planned from {DEFAULT_ORIGIN_LABEL}. "
+    "Name a station or address to start somewhere else."
+)
+
+
+def _defaulted_origin_warnings(prompt: str, start_label: str) -> tuple[str, ...]:
+    """Disclose an origin the traveller never asked for, whichever parser chose it."""
+    if start_label != DEFAULT_ORIGIN_LABEL:
+        return ()
+    if DeterministicPreferenceParser._explicit_start_label(prompt) is not None:
+        return ()
+    return (DEFAULTED_ORIGIN_WARNING,)
+
 
 class PreferenceParser(Protocol):
     def parse(self, prompt: str, *, journey_date: date) -> ParseOutcome: ...
@@ -125,7 +139,10 @@ class DeterministicPreferenceParser:
         return ParseOutcome(
             request=extraction.to_request(journey_date),
             source="deterministic_fallback_v1",
-            warnings=("Bedrock was not called; review extracted constraints before use.",),
+            warnings=(
+                "Bedrock was not called; review extracted constraints before use.",
+                *_defaulted_origin_warnings(prompt, extraction.start_label),
+            ),
         )
 
     def _mentioned_venue_ids(self, lowered: str) -> frozenset[str]:
@@ -249,6 +266,7 @@ class BedrockPreferenceParser:
             return ParseOutcome(
                 request=extraction.to_request(journey_date),
                 source=f"bedrock:{self.settings.bedrock_model_id}",
+                warnings=_defaulted_origin_warnings(prompt, extraction.start_label),
                 token_usage=TokenUsage(
                     input_tokens=int(usage.get("inputTokens", 0)),
                     output_tokens=int(usage.get("outputTokens", 0)),

@@ -250,3 +250,19 @@ def test_prompt_without_an_origin_uses_the_documented_default_hub() -> None:
         journey_date=date(2026, 9, 8),
     )
     assert outcome.request.start_label == DEFAULT_ORIGIN_LABEL
+
+
+def test_a_defaulted_origin_is_disclosed_not_assumed() -> None:
+    """A day starting somewhere the traveller never named has to say so."""
+    parser = DeterministicPreferenceParser(VenueCatalog())
+    defaulted = parser.parse(
+        "Plan a full-day outing for two people, keeping walking distances short.",
+        journey_date=date(2026, 9, 8),
+    )
+    assert defaulted.request.start_label == DEFAULT_ORIGIN_LABEL
+    assert any(DEFAULT_ORIGIN_LABEL in warning for warning in defaulted.warnings)
+
+    named = parser.parse(
+        "Plan a day starting from Bishan MRT Station.", journey_date=date(2026, 9, 8)
+    )
+    assert not any("No starting point was named" in warning for warning in named.warnings)
