@@ -66,7 +66,7 @@ from adaptsg.errors import (
 from adaptsg.planning import JourneyPlanner, JourneyReplanner
 from adaptsg.preference_parser import (
     BedrockPreferenceParser,
-    LMStudioPreferenceParser,
+    DeterministicPreferenceParser,
     PreferenceParser,
 )
 from adaptsg.settings import Settings, get_settings
@@ -112,6 +112,19 @@ class JourneyStore(Protocol):
         expires_epoch: int,
     ) -> None: ...
 
+    def commit_with_audit(
+        self,
+        state: JourneyState,
+        *,
+        expected_version: int | None,
+        key_hash: str,
+        fingerprint: str,
+        expires_epoch: int,
+        audit: AuditStore,
+        audit_event: AuditEvent,
+        expected_previous_hash: str | None,
+    ) -> AuditEvent: ...
+
     def release(self, key_hash: str, fingerprint: str) -> None: ...
 
 
@@ -119,6 +132,44 @@ class AuditStore(Protocol):
     def append(self, event: AuditEvent, *, expected_previous_hash: str | None) -> AuditEvent: ...
 
     def list(self, *, correlation_id: UUID | None = None) -> tuple[AuditEvent, ...]: ...
+
+    def latest_hash(self, correlation_id: UUID) -> str | None: ...
+
+
+class ConsentStore(Protocol):
+    def create(self, record: ConsentRecord, *, idempotency_key: str) -> ConsentRecord: ...
+
+    def get(self, consent_id: UUID) -> ConsentRecord: ...
+
+    def find_current(
+        self,
+        *,
+        subject: str,
+        purpose: ConsentPurpose,
+        categories: frozenset[str],
+        policy_version: str | None,
+        now: datetime,
+    ) -> ConsentRecord | None: ...
+
+    def revoke(self, consent_id: UUID, *, expected_version: int, at: datetime) -> ConsentRecord: ...
+
+
+class AuthorityStore(Protocol):
+    def put(self, grant: AuthorityGrant) -> AuthorityGrant: ...
+
+    def get(self, subject: str, delegate: str) -> AuthorityGrant: ...
+
+    def revoke(self, subject: str, delegate: str, *, at: datetime) -> AuthorityGrant: ...
+
+
+class ActionIntentStore(Protocol):
+    storage_mode: str
+
+    def put(self, intent: ActionIntent) -> None: ...
+
+    def get(self, intent_id: UUID) -> ActionIntent: ...
+
+    def mark_used(self, intent: ActionIntent, *, replay_key: str, result: object) -> object: ...
 
 
 class InMemoryAuditStore:
@@ -135,7 +186,14 @@ class InMemoryAuditStore:
         with self._lock:
             if self.fail_writes:
                 raise AuditUnavailable("audit storage is unavailable")
-            previous = self._events[-1].event_hash if self._events else None
+            previous = next(
+                (
+                    candidate.event_hash
+                    for candidate in reversed(self._events)
+                    if candidate.correlation_id == event.correlation_id
+                ),
+                None,
+            )
             if previous != expected_previous_hash:
                 raise AuditUnavailable("audit chain changed; mutation must be retried")
             material = event.model_copy(update={"previous_hash": previous})
@@ -154,8 +212,14 @@ class InMemoryAuditStore:
                 if correlation_id is None or event.correlation_id == correlation_id
             )
 
+    def latest_hash(self, correlation_id: UUID) -> str | None:
+        events = self.list(correlation_id=correlation_id)
+        return events[-1].event_hash if events else None
+
 
 class InMemoryConsentStore:
+    storage_mode = "memory_demo"
+
     def __init__(self) -> None:
         self._records: dict[UUID, ConsentRecord] = {}
         self._idempotency: dict[str, tuple[str, ConsentRecord]] = {}
@@ -218,6 +282,8 @@ class InMemoryConsentStore:
 
 
 class InMemoryAuthorityStore:
+    storage_mode = "memory_demo"
+
     def __init__(self) -> None:
         self._grants: dict[str, AuthorityGrant] = {}
 
@@ -236,6 +302,37 @@ class InMemoryAuthorityStore:
         updated = current.model_copy(update={"revoked_at": at})
         self._grants[delegate + ":" + subject] = updated
         return updated
+
+
+class InMemoryActionIntentStore:
+    storage_mode = "memory_demo"
+
+    def __init__(self) -> None:
+        self._intents: dict[UUID, ActionIntent] = {}
+        self._results: dict[str, object] = {}
+        self._lock = threading.RLock()
+
+    def put(self, intent: ActionIntent) -> None:
+        with self._lock:
+            self._intents[intent.id] = intent
+
+    def get(self, intent_id: UUID) -> ActionIntent:
+        with self._lock:
+            try:
+                return self._intents[intent_id]
+            except KeyError as exc:
+                raise IntentConflict("action intent was not found") from exc
+
+    def mark_used(self, intent: ActionIntent, *, replay_key: str, result: object) -> object:
+        with self._lock:
+            current = self.get(intent.id)
+            if current.used_at is not None:
+                if replay_key in self._results:
+                    return self._results[replay_key]
+                raise IntentConflict("action intent has already been used")
+            self._intents[intent.id] = intent
+            self._results[replay_key] = result
+            return result
 
 
 class CapabilityResolver:
@@ -275,8 +372,8 @@ class AuthorizationPolicy:
         self,
         *,
         capabilities: CapabilityResolver | None = None,
-        authority: InMemoryAuthorityStore | None = None,
-        consent: InMemoryConsentStore | None = None,
+        authority: AuthorityStore | None = None,
+        consent: ConsentStore | None = None,
         consent_policy_version: str | None = None,
     ) -> None:
         self.capabilities = capabilities or CapabilityResolver()
@@ -332,11 +429,15 @@ class AuthorizationPolicy:
 class ActionIntentService:
     """Server-issued, payload-bound, one-use intents; agents have no access to this service."""
 
-    def __init__(self, *, clock: Clock | None = None) -> None:
+    def __init__(
+        self, *, clock: Clock | None = None, store: ActionIntentStore | None = None
+    ) -> None:
         self._clock = clock or (lambda: datetime.now(UTC))
-        self._intents: dict[UUID, ActionIntent] = {}
-        self._results: dict[str, object] = {}
-        self._lock = threading.RLock()
+        self._store = store or InMemoryActionIntentStore()
+
+    @property
+    def storage_mode(self) -> str:
+        return self._store.storage_mode
 
     def issue(
         self,
@@ -373,8 +474,7 @@ class ActionIntentService:
             nonce=uuid4().hex + uuid4().hex,
             required_approvals=required_approvals,
         )
-        with self._lock:
-            self._intents[intent.id] = intent
+        self._store.put(intent)
         return intent
 
     def consume(
@@ -386,30 +486,20 @@ class ActionIntentService:
         state_version: int,
         result: object,
     ) -> object:
-        with self._lock:
-            try:
-                intent = self._intents[intent_id]
-            except KeyError as exc:
-                raise IntentConflict("action intent was not found") from exc
-            now = self._clock()
-            payload_hash = hashlib.sha256(
-                json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
-            ).hexdigest()
-            if intent.actor != principal.principal_id or intent.payload_hash != payload_hash:
-                raise IntentConflict("action intent actor or payload does not match")
-            if intent.expected_state_version != state_version:
-                raise IntentConflict("action intent targets a stale state version")
-            if now >= intent.expires_at:
-                raise IntentConflict("action intent has expired")
-            if intent.used_at is not None:
-                key = intent.nonce + ":" + payload_hash
-                if key in self._results:
-                    return self._results[key]
-                raise IntentConflict("action intent has already been used")
-            updated = intent.model_copy(update={"used_at": now})
-            self._intents[intent_id] = updated
-            self._results[intent.nonce + ":" + payload_hash] = result
-            return result
+        intent = self._store.get(intent_id)
+        now = self._clock()
+        payload_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ).hexdigest()
+        if intent.actor != principal.principal_id or intent.payload_hash != payload_hash:
+            raise IntentConflict("action intent actor or payload does not match")
+        if intent.expected_state_version != state_version:
+            raise IntentConflict("action intent targets a stale state version")
+        if now >= intent.expires_at:
+            raise IntentConflict("action intent has expired")
+        replay_key = intent.nonce + ":" + payload_hash
+        updated = intent.model_copy(update={"used_at": now})
+        return self._store.mark_used(updated, replay_key=replay_key, result=result)
 
 
 @dataclass
@@ -476,6 +566,28 @@ class InMemoryJourneyStore:
             self._journeys[state.journey_id] = state
             replay.response = state
             replay.expires_epoch = expires_epoch
+
+    def commit_with_audit(
+        self,
+        state: JourneyState,
+        *,
+        expected_version: int | None,
+        key_hash: str,
+        fingerprint: str,
+        expires_epoch: int,
+        audit: AuditStore,
+        audit_event: AuditEvent,
+        expected_previous_hash: str | None,
+    ) -> AuditEvent:
+        stored_event = audit.append(audit_event, expected_previous_hash=expected_previous_hash)
+        self.commit(
+            state,
+            expected_version=expected_version,
+            key_hash=key_hash,
+            fingerprint=fingerprint,
+            expires_epoch=expires_epoch,
+        )
+        return stored_event
 
     def release(self, key_hash: str, fingerprint: str) -> None:
         with self._lock:
@@ -573,6 +685,70 @@ class DynamoDBJourneyStore:
         fingerprint: str,
         expires_epoch: int,
     ) -> None:
+        try:
+            self.client.transact_write_items(
+                TransactItems=self._commit_items(
+                    state,
+                    expected_version=expected_version,
+                    key_hash=key_hash,
+                    fingerprint=fingerprint,
+                    expires_epoch=expires_epoch,
+                )
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "TransactionCanceledException":
+                raise StaleJourneyVersion(
+                    "journey version changed; reload before retrying"
+                ) from exc
+            raise
+
+    def commit_with_audit(
+        self,
+        state: JourneyState,
+        *,
+        expected_version: int | None,
+        key_hash: str,
+        fingerprint: str,
+        expires_epoch: int,
+        audit: AuditStore,
+        audit_event: AuditEvent,
+        expected_previous_hash: str | None,
+    ) -> AuditEvent:
+        if not isinstance(audit, DynamoDBAuditStore):
+            raise AuditUnavailable("DynamoDB journeys require the DynamoDB audit store")
+        stored_event, audit_items = audit.prepare_append(
+            audit_event, expected_previous_hash=expected_previous_hash
+        )
+        try:
+            self.client.transact_write_items(
+                TransactItems=[
+                    *self._commit_items(
+                        state,
+                        expected_version=expected_version,
+                        key_hash=key_hash,
+                        fingerprint=fingerprint,
+                        expires_epoch=expires_epoch,
+                    ),
+                    *audit_items,
+                ]
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "TransactionCanceledException":
+                raise AuditUnavailable(
+                    "atomic journey and audit commit was rejected; reload and retry"
+                ) from exc
+            raise
+        return stored_event
+
+    def _commit_items(
+        self,
+        state: JourneyState,
+        *,
+        expected_version: int | None,
+        key_hash: str,
+        fingerprint: str,
+        expires_epoch: int,
+    ) -> list[dict[str, Any]]:
         journey_put: dict[str, Any] = {
             "TableName": self.table_name,
             "Item": {
@@ -591,41 +767,32 @@ class DynamoDBJourneyStore:
             journey_put["ExpressionAttributeValues"] = {
                 ":expected_version": {"N": str(expected_version)}
             }
-        try:
-            self.client.transact_write_items(
-                TransactItems=[
-                    {"Put": journey_put},
-                    {
-                        "Update": {
-                            "TableName": self.table_name,
-                            "Key": {
-                                "pk": {"S": self._idempotency_pk(key_hash)},
-                                "sk": {"S": "STATE"},
-                            },
-                            "UpdateExpression": (
-                                "SET operation_status = :complete, response_json = :response, "
-                                "expires_at = :expires"
-                            ),
-                            "ConditionExpression": (
-                                "fingerprint = :fingerprint AND operation_status = :in_progress"
-                            ),
-                            "ExpressionAttributeValues": {
-                                ":complete": {"S": "complete"},
-                                ":response": {"S": state.model_dump_json()},
-                                ":expires": {"N": str(expires_epoch)},
-                                ":fingerprint": {"S": fingerprint},
-                                ":in_progress": {"S": "in_progress"},
-                            },
-                        }
+        return [
+            {"Put": journey_put},
+            {
+                "Update": {
+                    "TableName": self.table_name,
+                    "Key": {
+                        "pk": {"S": self._idempotency_pk(key_hash)},
+                        "sk": {"S": "STATE"},
                     },
-                ]
-            )
-        except ClientError as exc:
-            if exc.response.get("Error", {}).get("Code") == "TransactionCanceledException":
-                raise StaleJourneyVersion(
-                    "journey version changed; reload before retrying"
-                ) from exc
-            raise
+                    "UpdateExpression": (
+                        "SET operation_status = :complete, response_json = :response, "
+                        "expires_at = :expires"
+                    ),
+                    "ConditionExpression": (
+                        "fingerprint = :fingerprint AND operation_status = :in_progress"
+                    ),
+                    "ExpressionAttributeValues": {
+                        ":complete": {"S": "complete"},
+                        ":response": {"S": state.model_dump_json()},
+                        ":expires": {"N": str(expires_epoch)},
+                        ":fingerprint": {"S": fingerprint},
+                        ":in_progress": {"S": "in_progress"},
+                    },
+                }
+            },
+        ]
 
     def release(self, key_hash: str, fingerprint: str) -> None:
         try:
@@ -653,6 +820,434 @@ class DynamoDBJourneyStore:
         return f"IDEMPOTENCY#{key_hash}"
 
 
+class DynamoDBAuditStore:
+    """Per-journey append-only audit chains stored in the application table."""
+
+    storage_mode = "dynamodb"
+
+    def __init__(self, *, table_name: str, client: Any, retention_days: int) -> None:
+        self.table_name = table_name
+        self.client = client
+        self.retention = timedelta(days=retention_days)
+
+    def prepare_append(
+        self, event: AuditEvent, *, expected_previous_hash: str | None
+    ) -> tuple[AuditEvent, list[dict[str, Any]]]:
+        material = event.model_copy(update={"previous_hash": expected_previous_hash})
+        event_hash = hashlib.sha256(
+            material.model_dump_json(exclude={"event_hash"}).encode()
+        ).hexdigest()
+        stored = material.model_copy(update={"event_hash": event_hash})
+        partition = self._partition(event.correlation_id)
+        head_put: dict[str, Any] = {
+            "TableName": self.table_name,
+            "Item": {
+                "pk": {"S": partition},
+                "sk": {"S": "HEAD"},
+                "record_type": {"S": "audit_head"},
+                "head_hash": {"S": event_hash},
+            },
+        }
+        if expected_previous_hash is None:
+            head_put["ConditionExpression"] = "attribute_not_exists(pk)"
+        else:
+            head_put["ConditionExpression"] = "head_hash = :previous"
+            head_put["ExpressionAttributeValues"] = {":previous": {"S": expected_previous_hash}}
+        expires_epoch = int((event.timestamp + self.retention).timestamp())
+        event_put = {
+            "TableName": self.table_name,
+            "Item": {
+                "pk": {"S": partition},
+                "sk": {"S": f"EVENT#{event.timestamp.isoformat()}#{event.event_id}"},
+                "record_type": {"S": "audit_event"},
+                "event_json": {"S": stored.model_dump_json()},
+                "expires_at": {"N": str(expires_epoch)},
+            },
+            "ConditionExpression": "attribute_not_exists(pk)",
+        }
+        return stored, [{"Put": head_put}, {"Put": event_put}]
+
+    def append(self, event: AuditEvent, *, expected_previous_hash: str | None) -> AuditEvent:
+        stored, items = self.prepare_append(event, expected_previous_hash=expected_previous_hash)
+        try:
+            self.client.transact_write_items(TransactItems=items)
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "TransactionCanceledException":
+                raise AuditUnavailable("audit chain changed; mutation must be retried") from exc
+            raise
+        return stored
+
+    def list(self, *, correlation_id: UUID | None = None) -> tuple[AuditEvent, ...]:
+        if correlation_id is None:
+            raise AuthorizationDenied("global audit enumeration is not available")
+        response = self.client.query(
+            TableName=self.table_name,
+            KeyConditionExpression="pk = :pk AND begins_with(sk, :event)",
+            ExpressionAttributeValues={
+                ":pk": {"S": self._partition(correlation_id)},
+                ":event": {"S": "EVENT#"},
+            },
+            ConsistentRead=True,
+            ScanIndexForward=False,
+            Limit=100,
+        )
+        newest_first = tuple(
+            AuditEvent.model_validate_json(item["event_json"]["S"])
+            for item in response.get("Items", [])
+        )
+        return tuple(reversed(newest_first))
+
+    def latest_hash(self, correlation_id: UUID) -> str | None:
+        response = self.client.get_item(
+            TableName=self.table_name,
+            Key={"pk": {"S": self._partition(correlation_id)}, "sk": {"S": "HEAD"}},
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        return item["head_hash"]["S"] if item else None
+
+    @staticmethod
+    def _partition(correlation_id: UUID) -> str:
+        return f"AUDIT#{correlation_id}"
+
+
+class DynamoDBConsentStore:
+    """Durable, owner-keyed consent records with idempotent creation and retained revocation."""
+
+    storage_mode = "dynamodb"
+
+    def __init__(self, *, table_name: str, client: Any, revoked_retention_days: int) -> None:
+        self.table_name = table_name
+        self.client = client
+        self.revoked_retention = timedelta(days=revoked_retention_days)
+
+    def create(self, record: ConsentRecord, *, idempotency_key: str) -> ConsentRecord:
+        fingerprint = record.model_dump_json(exclude={"id", "version"})
+        key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()
+        idempotency_pk = f"CONSENT_IDEMPOTENCY#{key_hash}"
+        retention_epoch = int((record.granted_at + self.revoked_retention).timestamp())
+        try:
+            self.client.transact_write_items(
+                TransactItems=[
+                    {
+                        "Put": {
+                            "TableName": self.table_name,
+                            "Item": self._record_item(record),
+                            "ConditionExpression": "attribute_not_exists(pk)",
+                        }
+                    },
+                    {
+                        "Put": {
+                            "TableName": self.table_name,
+                            "Item": self._current_item(record),
+                        }
+                    },
+                    {
+                        "Put": {
+                            "TableName": self.table_name,
+                            "Item": {
+                                "pk": {"S": idempotency_pk},
+                                "sk": {"S": "STATE"},
+                                "record_type": {"S": "consent_idempotency"},
+                                "fingerprint": {"S": fingerprint},
+                                "record_json": {"S": record.model_dump_json()},
+                                "expires_at": {"N": str(retention_epoch)},
+                            },
+                            "ConditionExpression": "attribute_not_exists(pk)",
+                        }
+                    },
+                ]
+            )
+            return record
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "TransactionCanceledException":
+                raise
+        response = self.client.get_item(
+            TableName=self.table_name,
+            Key={"pk": {"S": idempotency_pk}, "sk": {"S": "STATE"}},
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        if item is None:
+            raise OperationInProgress("consent creation is being completed")
+        if item["fingerprint"]["S"] != fingerprint:
+            raise IdempotencyConflict("consent idempotency key conflicts")
+        return ConsentRecord.model_validate_json(item["record_json"]["S"])
+
+    def get(self, consent_id: UUID) -> ConsentRecord:
+        response = self.client.get_item(
+            TableName=self.table_name,
+            Key={"pk": {"S": self._record_pk(consent_id)}, "sk": {"S": "STATE"}},
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        if item is None:
+            raise ConsentRequired("consent record was not found")
+        return ConsentRecord.model_validate_json(item["record_json"]["S"])
+
+    def find_current(
+        self,
+        *,
+        subject: str,
+        purpose: ConsentPurpose,
+        categories: frozenset[str],
+        policy_version: str | None,
+        now: datetime,
+    ) -> ConsentRecord | None:
+        response = self.client.get_item(
+            TableName=self.table_name,
+            Key={
+                "pk": {"S": self._subject_pk(subject)},
+                "sk": {"S": f"PURPOSE#{purpose.value}"},
+            },
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        if item is None:
+            return None
+        record = ConsentRecord.model_validate_json(item["record_json"]["S"])
+        if (
+            not categories <= record.data_categories
+            or (policy_version is not None and record.policy_version != policy_version)
+            or not record.active_at(now)
+        ):
+            return None
+        return record
+
+    def revoke(self, consent_id: UUID, *, expected_version: int, at: datetime) -> ConsentRecord:
+        current = self.get(consent_id)
+        if current.version != expected_version:
+            raise StaleJourneyVersion("consent version changed", current_version=current.version)
+        if current.revoked_at is not None:
+            return current
+        updated = current.model_copy(
+            update={
+                "revoked_at": at,
+                "version": current.version + 1,
+                "retention_expires_at": at + self.revoked_retention,
+            }
+        )
+        record_put = {
+            "TableName": self.table_name,
+            "Item": self._record_item(updated),
+            "ConditionExpression": "version = :expected",
+            "ExpressionAttributeValues": {":expected": {"N": str(expected_version)}},
+        }
+        items: list[dict[str, Any]] = [{"Put": record_put}]
+        pointer_key = {
+            "pk": {"S": self._subject_pk(current.subject)},
+            "sk": {"S": f"PURPOSE#{current.purpose.value}"},
+        }
+        pointer = self.client.get_item(
+            TableName=self.table_name, Key=pointer_key, ConsistentRead=True
+        ).get("Item")
+        if pointer and pointer.get("consent_id", {}).get("S") == str(consent_id):
+            items.append(
+                {
+                    "Put": {
+                        "TableName": self.table_name,
+                        "Item": self._current_item(updated),
+                        "ConditionExpression": "consent_id = :consent_id",
+                        "ExpressionAttributeValues": {":consent_id": {"S": str(consent_id)}},
+                    }
+                }
+            )
+        try:
+            self.client.transact_write_items(TransactItems=items)
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "TransactionCanceledException":
+                raise StaleJourneyVersion("consent version changed") from exc
+            raise
+        return updated
+
+    def _record_item(self, record: ConsentRecord) -> dict[str, Any]:
+        item: dict[str, Any] = {
+            "pk": {"S": self._record_pk(record.id)},
+            "sk": {"S": "STATE"},
+            "record_type": {"S": "consent"},
+            "record_json": {"S": record.model_dump_json()},
+            "version": {"N": str(record.version)},
+            "subject_key": {"S": self._subject_pk(record.subject)},
+        }
+        if record.retention_expires_at is not None:
+            item["expires_at"] = {"N": str(int(record.retention_expires_at.timestamp()))}
+        return item
+
+    def _current_item(self, record: ConsentRecord) -> dict[str, Any]:
+        item = {
+            "pk": {"S": self._subject_pk(record.subject)},
+            "sk": {"S": f"PURPOSE#{record.purpose.value}"},
+            "record_type": {"S": "consent_current"},
+            "consent_id": {"S": str(record.id)},
+            "record_json": {"S": record.model_dump_json()},
+        }
+        if record.retention_expires_at is not None:
+            item["expires_at"] = {"N": str(int(record.retention_expires_at.timestamp()))}
+        return item
+
+    @staticmethod
+    def _record_pk(consent_id: UUID) -> str:
+        return f"CONSENT#{consent_id}"
+
+    @staticmethod
+    def _subject_pk(subject: str) -> str:
+        return "CONSENT_SUBJECT#" + hashlib.sha256(subject.encode()).hexdigest()
+
+
+class DynamoDBAuthorityStore:
+    storage_mode = "dynamodb"
+
+    def __init__(self, *, table_name: str, client: Any) -> None:
+        self.table_name = table_name
+        self.client = client
+
+    def put(self, grant: AuthorityGrant) -> AuthorityGrant:
+        try:
+            self.client.put_item(
+                TableName=self.table_name,
+                Item=self._item(grant),
+                ConditionExpression=(
+                    "attribute_not_exists(pk) OR attribute_exists(revoked_at) "
+                    "OR expires_at <= :now OR grant_json = :grant"
+                ),
+                ExpressionAttributeValues={
+                    ":now": {"N": str(int(grant.valid_from.timestamp()))},
+                    ":grant": {"S": grant.model_dump_json()},
+                },
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                raise IdempotencyConflict(
+                    "an active authority grant already exists for this delegate"
+                ) from exc
+            raise
+        return grant
+
+    def get(self, subject: str, delegate: str) -> AuthorityGrant:
+        response = self.client.get_item(
+            TableName=self.table_name,
+            Key=self._key(subject, delegate),
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        if item is None:
+            raise AuthorityGrantRequired("active authority grant is required")
+        return AuthorityGrant.model_validate_json(item["grant_json"]["S"])
+
+    def revoke(self, subject: str, delegate: str, *, at: datetime) -> AuthorityGrant:
+        current = self.get(subject, delegate)
+        if current.revoked_at is not None:
+            return current
+        updated = current.model_copy(update={"revoked_at": at})
+        try:
+            self.client.put_item(
+                TableName=self.table_name,
+                Item=self._item(updated),
+                ConditionExpression="attribute_not_exists(revoked_at)",
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                return self.get(subject, delegate)
+            raise
+        return updated
+
+    def _item(self, grant: AuthorityGrant) -> dict[str, Any]:
+        item = {
+            **self._key(grant.subject, grant.delegate),
+            "record_type": {"S": "authority_grant"},
+            "grant_json": {"S": grant.model_dump_json()},
+            "expires_at": {"N": str(int(grant.valid_until.timestamp()))},
+        }
+        if grant.revoked_at is not None:
+            item["revoked_at"] = {"S": grant.revoked_at.isoformat()}
+        return item
+
+    @staticmethod
+    def _key(subject: str, delegate: str) -> dict[str, dict[str, str]]:
+        subject_hash = hashlib.sha256(subject.encode()).hexdigest()
+        delegate_hash = hashlib.sha256(delegate.encode()).hexdigest()
+        return {
+            "pk": {"S": f"AUTHORITY#{subject_hash}"},
+            "sk": {"S": f"DELEGATE#{delegate_hash}"},
+        }
+
+
+class DynamoDBActionIntentStore:
+    storage_mode = "dynamodb"
+
+    def __init__(self, *, table_name: str, client: Any) -> None:
+        self.table_name = table_name
+        self.client = client
+
+    def put(self, intent: ActionIntent) -> None:
+        self.client.put_item(
+            TableName=self.table_name,
+            Item={
+                **self._key(intent.id),
+                "record_type": {"S": "action_intent"},
+                "intent_json": {"S": intent.model_dump_json()},
+                "expires_at": {"N": str(int(intent.expires_at.timestamp()))},
+            },
+            ConditionExpression="attribute_not_exists(pk)",
+        )
+
+    def get(self, intent_id: UUID) -> ActionIntent:
+        response = self.client.get_item(
+            TableName=self.table_name,
+            Key=self._key(intent_id),
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        if item is None:
+            raise IntentConflict("action intent was not found")
+        return ActionIntent.model_validate_json(item["intent_json"]["S"])
+
+    def mark_used(self, intent: ActionIntent, *, replay_key: str, result: object) -> object:
+        if intent.used_at is None:
+            raise IntentConflict("action intent use timestamp is required")
+        result_json = json.dumps(result, default=self._json_default, separators=(",", ":"))
+        try:
+            self.client.update_item(
+                TableName=self.table_name,
+                Key=self._key(intent.id),
+                UpdateExpression=(
+                    "SET intent_json = :intent, used_at = :used, "
+                    "replay_key = :replay, result_json = :result"
+                ),
+                ConditionExpression="attribute_not_exists(used_at)",
+                ExpressionAttributeValues={
+                    ":intent": {"S": intent.model_dump_json()},
+                    ":used": {"S": intent.used_at.isoformat()},
+                    ":replay": {"S": replay_key},
+                    ":result": {"S": result_json},
+                },
+            )
+            return result
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+                raise
+        response = self.client.get_item(
+            TableName=self.table_name,
+            Key=self._key(intent.id),
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        if item and item.get("replay_key", {}).get("S") == replay_key:
+            return json.loads(item["result_json"]["S"])
+        raise IntentConflict("action intent has already been used")
+
+    @staticmethod
+    def _json_default(value: object) -> object:
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return model_dump(mode="json")
+        return str(value)
+
+    @staticmethod
+    def _key(intent_id: UUID) -> dict[str, dict[str, str]]:
+        return {"pk": {"S": f"INTENT#{intent_id}"}, "sk": {"S": "STATE"}}
+
+
 class AdaptSGService:
     def __init__(
         self,
@@ -665,10 +1260,14 @@ class AdaptSGService:
         store: JourneyStore | None = None,
         ttl_hours: int = 24,
         mode: str = "demo",
+        auth_mode: str = "demo",
         local_live: bool = False,
         clock: Clock | None = None,
         policy: CapabilityResolver | None = None,
         audit: AuditStore | None = None,
+        consent: ConsentStore | None = None,
+        authority: AuthorityStore | None = None,
+        intents: ActionIntentService | None = None,
         consent_policy_version: str | None = None,
         consent_categories: frozenset[str] = frozenset(),
     ) -> None:
@@ -681,18 +1280,22 @@ class AdaptSGService:
         self.store = store or InMemoryJourneyStore(clock=self._clock)
         self.ttl = timedelta(hours=ttl_hours)
         self.mode = mode
+        self._auth_mode = auth_mode
         self.local_live = local_live
         self.policy = policy or CapabilityResolver()
         self.audit = audit or InMemoryAuditStore()
         self.consent_policy_version = consent_policy_version
         self.consent_categories = consent_categories
         authorization = AuthorizationPolicy(
-            capabilities=self.policy, consent_policy_version=consent_policy_version
+            capabilities=self.policy,
+            authority=authority,
+            consent=consent,
+            consent_policy_version=consent_policy_version,
         )
         self.authorization = authorization
         self.consent = authorization.consent
         self.authority = authorization.authority
-        self.intents = ActionIntentService(clock=self._clock)
+        self.intents = intents or ActionIntentService(clock=self._clock)
         self._plan_graph = self._build_plan_graph()
 
     @property
@@ -701,7 +1304,7 @@ class AdaptSGService:
 
     @property
     def auth_mode(self) -> str:
-        return "demo" if self.local_live else self.mode
+        return self._auth_mode
 
     def _build_plan_graph(self) -> object:
         graph = StateGraph(PlanGraphState)
@@ -756,7 +1359,18 @@ class AdaptSGService:
             raise ToolUnavailable(
                 f"location verification returned no result for {request.start_label!r}"
             )
-        selected = results[0]
+        normalized_query = request.start_label.strip().casefold()
+        exact_matches = tuple(
+            result for result in results if result.label.strip().casefold() == normalized_query
+        )
+        if len(results) > 1 and len(exact_matches) != 1:
+            raise ToolUnavailable(
+                f"location verification was ambiguous for {request.start_label!r}; "
+                "use a more specific Singapore address"
+            )
+        selected = exact_matches[0] if exact_matches else results[0]
+        if not selected.label.strip() or not selected.source.strip():
+            raise ToolUnavailable("location verification returned an unverified result")
         return request.model_copy(
             update={"start_label": selected.label, "start_location": selected.location}
         )
@@ -1194,14 +1808,16 @@ class AdaptSGService:
                     "version": state.version,
                 },
             )
-            previous = self.audit.list()[-1].event_hash if self.audit.list() else None
-            self.audit.append(audit_event, expected_previous_hash=previous)
-            self.store.commit(
+            previous = self.audit.latest_hash(state.journey_id)
+            self.store.commit_with_audit(
                 state,
                 expected_version=expected_version,
                 key_hash=key_hash,
                 fingerprint=fingerprint,
                 expires_epoch=int(state.expires_at.timestamp()),
+                audit=self.audit,
+                audit_event=audit_event,
+                expected_previous_hash=previous,
             )
         except Exception:
             self.store.release(key_hash, fingerprint)
@@ -1325,6 +1941,10 @@ class AdaptSGService:
 
 def build_service(settings: Settings | None = None) -> AdaptSGService:
     resolved = settings or get_settings()
+    if resolved.adaptsg_audit_storage_configured and not resolved.adaptsg_journeys_table:
+        raise RetentionConfigurationMissing(
+            "ADAPTSG_AUDIT_STORAGE_CONFIGURED requires ADAPTSG_JOURNEYS_TABLE"
+        )
     live_requirements = (
         ("ADAPTSG_AUTHENTICATION_MODE", resolved.adaptsg_authentication_mode == "cognito"),
         ("ADAPTSG_COGNITO_ISSUER", bool(resolved.adaptsg_cognito_issuer)),
@@ -1390,12 +2010,12 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
     validator = ItineraryValidator(max_replans=resolved.adaptsg_max_replans)
     location = (
         DemoLocationClient()
-        if resolved.adaptsg_mode == "demo"
+        if resolved.adaptsg_provider_mode == "demo"
         else OneMapLocationClient(token=resolved.onemap_api_token or "")
     )
     routing = (
         DemoRoutingClient()
-        if resolved.adaptsg_mode == "demo"
+        if resolved.adaptsg_provider_mode == "demo"
         else OneMapRoutingClient(
             token=resolved.onemap_api_token or "",
             bfa_enabled=resolved.onemap_bfa_enabled,
@@ -1403,7 +2023,7 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
     )
     environment: EnvironmentClient = (
         DemoEnvironmentClient()
-        if resolved.adaptsg_mode == "demo"
+        if resolved.adaptsg_provider_mode == "demo"
         else LiveEnvironmentClient(
             catalog=catalog,
             lta_account_key=resolved.lta_account_key or "",
@@ -1421,22 +2041,51 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
         max_replans=resolved.adaptsg_max_replans,
     )
     parser: PreferenceParser = (
-        LMStudioPreferenceParser(settings=resolved, catalog=catalog)
-        if resolved.adaptsg_llm_provider == "lmstudio"
-        else BedrockPreferenceParser(settings=resolved, catalog=catalog)
+        BedrockPreferenceParser(settings=resolved, catalog=catalog)
+        if resolved.adaptsg_bedrock_enabled
+        else DeterministicPreferenceParser(catalog)
     )
     store: JourneyStore
+    audit: AuditStore
+    consent: ConsentStore
+    authority: AuthorityStore
+    intents: ActionIntentService
     if resolved.adaptsg_journeys_table:
         session = boto3.Session(
             profile_name=resolved.aws_profile or None,
             region_name=resolved.aws_region,
         )
+        dynamodb = session.client("dynamodb")
         store = DynamoDBJourneyStore(
             table_name=resolved.adaptsg_journeys_table,
-            client=session.client("dynamodb"),
+            client=dynamodb,
+        )
+        audit = DynamoDBAuditStore(
+            table_name=resolved.adaptsg_journeys_table,
+            client=dynamodb,
+            retention_days=resolved.adaptsg_audit_retention_days or 90,
+        )
+        consent = DynamoDBConsentStore(
+            table_name=resolved.adaptsg_journeys_table,
+            client=dynamodb,
+            revoked_retention_days=resolved.adaptsg_revoked_consent_retention_days or 30,
+        )
+        authority = DynamoDBAuthorityStore(
+            table_name=resolved.adaptsg_journeys_table,
+            client=dynamodb,
+        )
+        intents = ActionIntentService(
+            store=DynamoDBActionIntentStore(
+                table_name=resolved.adaptsg_journeys_table,
+                client=dynamodb,
+            )
         )
     else:
         store = InMemoryJourneyStore()
+        audit = InMemoryAuditStore()
+        consent = InMemoryConsentStore()
+        authority = InMemoryAuthorityStore()
+        intents = ActionIntentService()
     return AdaptSGService(
         parser=parser,
         planner=planner,
@@ -1446,8 +2095,13 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
         store=store,
         ttl_hours=resolved.adaptsg_journey_ttl_hours,
         mode=resolved.adaptsg_mode,
+        auth_mode=resolved.adaptsg_authentication_mode,
         local_live=resolved.adaptsg_local_live_enabled,
         policy=policy,
+        audit=audit,
+        consent=consent,
+        authority=authority,
+        intents=intents,
         consent_policy_version=resolved.adaptsg_consent_policy_version or None,
         consent_categories=frozenset(
             value.strip()

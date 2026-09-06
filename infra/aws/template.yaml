@@ -11,7 +11,7 @@ Parameters:
     Type: String
     Default: demo
     AllowedValues: [demo, live]
-    Description: Demo is deterministic and makes no Bedrock or live-provider calls.
+    Description: Selects application and provider mode; Bedrock is controlled independently.
   AllowedCorsOrigin:
     Type: String
     Default: http://localhost:8000
@@ -42,6 +42,12 @@ Parameters:
     Default: 5
     MinValue: 1
     MaxValue: 1000
+  AlarmNotificationEmail:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^[^\s@]+@[^\s@]+\.[^\s@]+$'
+    ConstraintDescription: Must be empty or a valid single email address.
+    Description: Optional email address for operational alarm notifications; the SNS subscription must be confirmed.
   ProviderSecretName:
     Type: String
     Default: ""
@@ -49,6 +55,12 @@ Parameters:
   BedrockModelId:
     Type: String
     Default: global.anthropic.claude-haiku-4-5-20251001-v1:0
+  BedrockMaxTokens:
+    Type: Number
+    Default: 256
+    MinValue: 128
+    MaxValue: 4096
+    Description: Maximum Bedrock output tokens per preference-extraction request.
   BedrockModelArns:
     Type: CommaDelimitedList
     Default: DISABLED
@@ -106,6 +118,7 @@ Conditions:
   DeletionProtectionEnabled: !Equals [!Ref EnableDeletionProtection, "true"]
   HasLambdaReservedConcurrency: !Not [!Equals [!Ref LambdaReservedConcurrency, -1]]
   SelfSignUpEnabled: !Equals [!Ref EnableSelfSignUp, "true"]
+  HasAlarmNotificationEmail: !Not [!Equals [!Ref AlarmNotificationEmail, ""]]
 
 Globals:
   Function:
@@ -117,6 +130,7 @@ Globals:
     Environment:
       Variables:
         ADAPTSG_MODE: !Ref ApplicationMode
+        ADAPTSG_PROVIDER_MODE: !Ref ApplicationMode
         ADAPTSG_BEDROCK_ENABLED: !If [BedrockInferenceEnabled, "true", "false"]
         ADAPTSG_AUTHENTICATION_MODE: cognito
         ADAPTSG_AUTHENTICATION_CONFIGURED: "true"
@@ -136,6 +150,7 @@ Globals:
         ADAPTSG_COGNITO_AUDIENCE: !Ref CaregiverUserPoolClient
         AWS_XRAY_CONTEXT_MISSING: LOG_ERROR
         BEDROCK_MODEL_ID: !Ref BedrockModelId
+        BEDROCK_MAX_TOKENS: !Ref BedrockMaxTokens
         ONEMAP_API_TOKEN: !If
           - HasProviderSecret
           - !Sub "{{resolve:secretsmanager:${ProviderSecretName}:SecretString:ONEMAP_API_TOKEN}}"
@@ -727,9 +742,46 @@ Resources:
             - x-amz-security-token
           MaxAge: 300
 
+  OperationsAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-operations-alarms"
+      Tags:
+        - Key: Application
+          Value: AdaptSG
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  OperationsAlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref OperationsAlarmTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudWatchAlarmPublish
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref OperationsAlarmTopic
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${AWS::StackName}-*"
+  OperationsAlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmNotificationEmail
+    Properties:
+      TopicArn: !Ref OperationsAlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmNotificationEmail
+
   Api5xxAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
+      AlarmName: !Sub "${AWS::StackName}-lambda-errors"
       Namespace: AWS/Lambda
       MetricName: Errors
       Dimensions:
@@ -741,10 +793,13 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions: [!Ref OperationsAlarmTopic]
+      OKActions: [!Ref OperationsAlarmTopic]
 
   LambdaThrottleAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
+      AlarmName: !Sub "${AWS::StackName}-lambda-throttles"
       AlarmDescription: AdaptSG reached its reserved-concurrency cost boundary.
       Namespace: AWS/Lambda
       MetricName: Throttles
@@ -758,6 +813,8 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
+      AlarmActions: [!Ref OperationsAlarmTopic]
+      OKActions: [!Ref OperationsAlarmTopic]
 
   AdaptSgDashboard:
     Type: AWS::CloudWatch::Dashboard
@@ -818,6 +875,9 @@ Outputs:
     Value: !Ref EvidenceBucket
   DashboardName:
     Value: !Ref AdaptSgDashboard
+  OperationsAlarmTopicArn:
+    Description: Encrypted SNS topic used by CloudWatch operational alarms.
+    Value: !Ref OperationsAlarmTopic
   BedrockStatus:
     Description: DISABLED means the Lambda role cannot invoke Bedrock or consume model tokens.
     Value: !If [BedrockInferenceEnabled, CONNECTED, DISABLED]

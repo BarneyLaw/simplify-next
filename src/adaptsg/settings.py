@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,23 +16,17 @@ class Settings(BaseSettings):
     )
 
     adaptsg_mode: Literal["demo", "live"] = "live"
+    adaptsg_provider_mode: Literal["demo", "live"] = "demo"
     adaptsg_local_live_enabled: bool = False
     adaptsg_log_level: str = "INFO"
     aws_region: str = "us-east-1"
     aws_profile: str | None = None
     bedrock_model_id: str = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
     bedrock_max_tokens: int = Field(default=1_200, ge=128, le=4_096)
-    adaptsg_use_bedrock: bool = False
-    # Live-mode extraction provider. Bedrock keeps its separate adaptsg_use_bedrock cost gate;
-    # selecting lmstudio is itself the opt-in because the endpoint is local and free.
-    adaptsg_llm_provider: Literal["bedrock", "lmstudio"] = "bedrock"
-    lmstudio_base_url: str = "http://localhost:1234/v1"
-    lmstudio_model_id: str = "local-model"
-    # A local endpoint bills no tokens, and reasoning models spend most of this budget thinking
-    # before they emit any JSON, so the ceiling is far above the Bedrock one but still bounded.
-    lmstudio_max_tokens: int = Field(default=1_200, ge=128, le=32_768)
-    # Local models on CPU are slow to first token, so this is far longer than the 8s tool timeout.
-    lmstudio_timeout_seconds: float = Field(default=60, gt=0)
+    adaptsg_bedrock_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ADAPTSG_BEDROCK_ENABLED", "ADAPTSG_USE_BEDROCK"),
+    )
     adaptsg_approval_cost_increase_sgd: float = Field(default=8, ge=0)
     adaptsg_max_replans: int = Field(default=2, ge=1, le=3)
     adaptsg_journeys_table: str | None = None

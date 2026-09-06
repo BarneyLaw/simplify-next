@@ -1,4 +1,4 @@
-"""Verify the deployed token-free AdaptSG AWS demo boundary.
+"""Verify the deployed AdaptSG AWS demo boundary.
 
 This script intentionally reads configuration only. It never reads application data,
 provider secrets, Cognito users, or Lambda environment variables.
@@ -167,9 +167,28 @@ def _verify_bucket(
 
 
 def verify_deployment(
-    reader: AwsReader, *, stack_name: str, region: str
+    reader: AwsReader,
+    *,
+    stack_name: str,
+    region: str,
+    expected_bedrock_model_arns: str = "DISABLED",
 ) -> tuple[VerificationCheck, ...]:
     """Return all security and service-wiring checks for a deployed demo stack."""
+
+    if not expected_bedrock_model_arns:
+        raise DeploymentVerificationError("expected Bedrock model ARNs cannot be empty")
+    if expected_bedrock_model_arns != "DISABLED":
+        model_arns = expected_bedrock_model_arns.split(",")
+        if any(
+            not arn.startswith("arn:aws:bedrock:") or "*" in arn or arn != arn.strip()
+            for arn in model_arns
+        ):
+            raise DeploymentVerificationError(
+                "expected Bedrock resources must be exact comma-separated ARNs"
+            )
+    expected_bedrock_status = (
+        "DISABLED" if expected_bedrock_model_arns == "DISABLED" else "CONNECTED"
+    )
 
     checks: list[VerificationCheck] = []
     stack_response = reader.read("cloudformation", "describe-stacks", "--stack-name", stack_name)
@@ -201,15 +220,32 @@ def verify_deployment(
     )
     _record(
         checks,
-        "Bedrock deployment parameter is disabled",
-        parameters.get("BedrockModelArns") == "DISABLED",
+        "Bedrock deployment parameter matches the protected environment",
+        parameters.get("BedrockModelArns") == expected_bedrock_model_arns,
         str(parameters.get("BedrockModelArns")),
     )
     _record(
         checks,
-        "Bedrock stack output is disabled",
-        outputs.get("BedrockStatus") == "DISABLED",
+        "Bedrock stack output matches the expected connection state",
+        outputs.get("BedrockStatus") == expected_bedrock_status,
         str(outputs.get("BedrockStatus")),
+    )
+
+    operations_topic_arn = _require_string(outputs, "OperationsAlarmTopicArn", "stack outputs")
+    topic_attributes = _object(
+        reader.read("sns", "get-topic-attributes", "--topic-arn", operations_topic_arn).get(
+            "Attributes"
+        ),
+        "SNS operations topic attributes",
+    )
+    topic_policy = str(topic_attributes.get("Policy", ""))
+    _record(
+        checks,
+        "operations notification topic accepts scoped CloudWatch alarms",
+        "cloudwatch.amazonaws.com" in topic_policy
+        and operations_topic_arn in topic_policy
+        and stack_name in topic_policy,
+        operations_topic_arn,
     )
 
     web_bucket = _require_string(outputs, "WebBucketName", "stack outputs")
@@ -379,11 +415,12 @@ def verify_deployment(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Verify the deployed, deterministic, Bedrock-disabled AdaptSG AWS demo."
+        description="Verify the deployed deterministic-provider AdaptSG AWS demo."
     )
     parser.add_argument("--stack-name", default="adaptsg-demo")
     parser.add_argument("--region", default="ap-southeast-1")
     parser.add_argument("--profile")
+    parser.add_argument("--expected-bedrock-model-arns", default="DISABLED")
     return parser
 
 
@@ -391,7 +428,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     reader = AwsCliReader(region=args.region, profile=args.profile)
     try:
-        checks = verify_deployment(reader, stack_name=args.stack_name, region=args.region)
+        checks = verify_deployment(
+            reader,
+            stack_name=args.stack_name,
+            region=args.region,
+            expected_bedrock_model_arns=args.expected_bedrock_model_arns,
+        )
     except DeploymentVerificationError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 2

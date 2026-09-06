@@ -257,7 +257,7 @@ class BedrockPreferenceParser:
         self._client = client
 
     def parse(self, prompt: str, *, journey_date: date) -> ParseOutcome:
-        if self.settings.adaptsg_mode == "demo" or not self.settings.adaptsg_use_bedrock:
+        if not self.settings.adaptsg_bedrock_enabled:
             return self.fallback.parse(prompt, journey_date=journey_date)
         try:
             response = self._bedrock_client().converse(

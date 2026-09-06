@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, "feature/**"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -99,8 +100,8 @@ jobs:
     timeout-minutes: 35
     needs: [correctness, docker, sam]
     if: >-
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main'
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     environment: aws-demo
     permissions:
       contents: read
@@ -116,10 +117,14 @@ jobs:
       ADAPTSG_COGNITO_CALLBACK_URL: ${{ vars.ADAPTSG_COGNITO_CALLBACK_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8000' }}
       ADAPTSG_COGNITO_LOGOUT_URL: ${{ vars.ADAPTSG_COGNITO_LOGOUT_URL || vars.ADAPTSG_ALLOWED_CORS_ORIGIN || 'http://localhost:8000' }}
       ADAPTSG_PROVIDER_SECRET_NAME: ${{ vars.ADAPTSG_PROVIDER_SECRET_NAME }}
+      ADAPTSG_ALARM_NOTIFICATION_EMAIL: ${{ vars.ADAPTSG_ALARM_NOTIFICATION_EMAIL }}
+      ADAPTSG_BEDROCK_MODEL_ID: ${{ vars.ADAPTSG_BEDROCK_MODEL_ID || 'global.anthropic.claude-haiku-4-5-20251001-v1:0' }}
+      ADAPTSG_BEDROCK_MODEL_ARNS: ${{ vars.ADAPTSG_BEDROCK_MODEL_ARNS || 'DISABLED' }}
+      ADAPTSG_BEDROCK_MAX_TOKENS: ${{ vars.ADAPTSG_BEDROCK_MAX_TOKENS || '256' }}
     steps:
       - uses: actions/checkout@v4
       - name: Download correctness evidence
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: coverage-report
           path: deployment-evidence
@@ -135,6 +140,15 @@ jobs:
           : "${AWS_DEPLOY_ROLE_ARN:?Set AWS_DEPLOY_ROLE_ARN}"
           : "${AWS_CLOUDFORMATION_ROLE_ARN:?Set AWS_CLOUDFORMATION_ROLE_ARN}"
           : "${AWS_SAM_ARTIFACT_BUCKET:?Set AWS_SAM_ARTIFACT_BUCKET}"
+          if [[ "${ADAPTSG_BEDROCK_MODEL_ARNS}" != "DISABLED" ]]; then
+            : "${ADAPTSG_BEDROCK_MODEL_ID:?Set ADAPTSG_BEDROCK_MODEL_ID}"
+            IFS=',' read -ra bedrock_model_arns <<< "${ADAPTSG_BEDROCK_MODEL_ARNS}"
+            for model_arn in "${bedrock_model_arns[@]}"; do
+              [[ "${model_arn}" == arn:aws:bedrock:* ]]
+              [[ "${model_arn}" != *"*"* ]]
+              [[ "${model_arn}" != *" "* ]]
+            done
+          fi
       - name: Assume short-lived AWS deployment role
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -145,7 +159,7 @@ jobs:
       - name: Verify assumed AWS identity
         run: |
           aws sts get-caller-identity
-      - name: Build and deploy the token-free authenticated demo stack
+      - name: Build and deploy the authenticated demo stack
         shell: bash
         run: |
           set -euo pipefail
@@ -161,11 +175,16 @@ jobs:
               "CognitoCallbackUrl=${callback_url}"
               "CognitoLogoutUrl=${logout_url}"
               "EnableSelfSignUp=true"
-              "BedrockModelArns=DISABLED"
+              "BedrockModelId=${ADAPTSG_BEDROCK_MODEL_ID}"
+              "BedrockModelArns=${ADAPTSG_BEDROCK_MODEL_ARNS}"
+              "BedrockMaxTokens=${ADAPTSG_BEDROCK_MAX_TOKENS}"
               "EnablePointInTimeRecovery=false"
               "EnableDeletionProtection=false"
               "LambdaReservedConcurrency=-1"
             )
+            if [[ -n "${ADAPTSG_ALARM_NOTIFICATION_EMAIL}" ]]; then
+              parameters+=("AlarmNotificationEmail=${ADAPTSG_ALARM_NOTIFICATION_EMAIL}")
+            fi
             if [[ -n "${ADAPTSG_PROVIDER_SECRET_NAME}" ]]; then
               parameters+=("ProviderSecretName=${ADAPTSG_PROVIDER_SECRET_NAME}")
             fi
@@ -195,6 +214,7 @@ jobs:
             --output text)
           deploy_stack "${web_app_url}" "${web_app_url}/" "${web_app_url}/"
       - name: Smoke-test Lambda and DynamoDB without Bedrock
+        if: env.ADAPTSG_BEDROCK_MODEL_ARNS == 'DISABLED'
         shell: bash
         env:
           IDEMPOTENCY_KEY: github-${{ github.run_id }}-${{ github.run_attempt }}
@@ -203,6 +223,14 @@ jobs:
           function_name=$(aws cloudformation describe-stacks \
             --stack-name "${ADAPTSG_STACK_NAME}" \
             --query "Stacks[0].Outputs[?OutputKey=='AdaptSgFunctionName'].OutputValue" \
+            --output text)
+          export COGNITO_USER_POOL_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${ADAPTSG_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='CognitoUserPoolId'].OutputValue" \
+            --output text)
+          export COGNITO_CLIENT_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${ADAPTSG_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='CognitoClientId'].OutputValue" \
             --output text)
           python - <<'PY'
           import json
@@ -226,6 +254,21 @@ jobs:
                   "idempotency-key": os.environ["IDEMPOTENCY_KEY"],
               },
               "requestContext": {
+                  # Direct Lambda invocation bypasses API Gateway, so emulate the verified
+                  # post-authorizer claim shape. The real unsigned-gateway check below
+                  # independently proves that callers cannot supply these claims themselves.
+                  "authorizer": {
+                      "jwt": {
+                          "claims": {
+                              "sub": "deployment-smoke-caregiver",
+                              "iss": (
+                                  f"https://cognito-idp.{os.environ['AWS_REGION']}"
+                                  f".amazonaws.com/{os.environ['COGNITO_USER_POOL_ID']}"
+                              ),
+                              "client_id": os.environ["COGNITO_CLIENT_ID"],
+                          }
+                      }
+                  },
                   "domainName": "lambda",
                   "http": {
                       "method": "POST",
@@ -404,6 +447,7 @@ jobs:
           python infra/aws/verify_deployment.py
           --stack-name "${ADAPTSG_STACK_NAME}"
           --region "${AWS_REGION}"
+          --expected-bedrock-model-arns "${ADAPTSG_BEDROCK_MODEL_ARNS}"
       - name: Record deployed resources
         shell: bash
         run: |

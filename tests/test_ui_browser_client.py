@@ -43,6 +43,12 @@ def script() -> str:
     return match.group(1)
 
 
+def test_browser_metadata_is_host_neutral() -> None:
+    html = BROWSER_CLIENT.read_text(encoding="utf-8")
+    assert "<title>AdaptSG - Safe Singapore journeys</title>" in html
+    assert "Vercel demo" not in html
+
+
 def client_requests() -> set[tuple[str, str]]:
     """Every (method, path) the browser client can issue, as FastAPI spells them."""
     requests: set[tuple[str, str]] = set()

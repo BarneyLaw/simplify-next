@@ -4,13 +4,18 @@ Last updated: 2026-09-06 (Asia/Singapore)
 
 ## Current status
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static-web foundation is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, and verified-email Cognito self-signup. Bedrock remains disabled. The static browser client under `public/` and its Cognito/PKCE controls are merged to `main` (`feature/static-browser-cognito`) and pass the full local gate; CI now publishes `public/` instead of the infrastructure placeholder on the next deployment. The deployed demo still maps every authenticated request to the fixed `demo-caregiver` principal, so the static authentication handoff stays "browser implemented; deployed identity acceptance blocked" until Roles 1 and 4 land the identity/provider separation in `docs/contracts/production-readiness-handoffs.md`.
+The latest `main` deployment passes with durable consent, authority-grant, action-intent, and audit
+records. Its internal Lambda/DynamoDB smoke emulates API Gateway's post-authorizer claim shape,
+while a separate real API Gateway assertion still verifies that an unsigned protected request
+receives `401`.
 
-The deployed demo passed all 22 read-only AWS posture checks on 2026-09-06. The bootstrap stack
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. Bedrock has exact-resource invoke permission and a 256-output-token cap, while routing and environmental providers remain deterministic. No deployment inference request was made. The Role 1 identity/provider separation, Role 3 AWS browser metadata and corrected deployment smoke are merged, deployed and passing. Manual two-browser owner-isolation and one controlled Bedrock canary remain.
+
+The deployed demo passed all 23 read-only AWS posture checks on 2026-09-06. The bootstrap stack
 is updated so CI can repeat those checks after each deployment without access to application
 records, Cognito users, provider secrets, or Lambda environment values. Authenticated multi-user
-ownership remains blocked by the Role 1 independent-mode contract: deterministic provider mode
-currently selects the fixed `demo-caregiver` principal even after API Gateway validates Cognito.
+ownership is implemented in the deployed revision; independent browser-session verification is
+still required before making the final multi-user acceptance claim.
 
 ## Completed milestones
 
@@ -76,9 +81,13 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | AWS Lambda/DynamoDB deployment smoke | Passed | `adaptsg-demo` reached `CREATE_COMPLETE`; main commit `d38ae48` produced DynamoDB journey and private S3 evidence with zero Bedrock tokens |
 | AWS authenticated v2 deployment | Passed | `adaptsg-demo` reached `UPDATE_COMPLETE`; main run `33972607910` passed token-free smoke and public/protected route checks |
 | AWS static web deployment | Passed | `adaptsg-demo` reached `UPDATE_COMPLETE`; main run `33976769643` passed CloudFront page/runtime-config/same-origin API smoke; Cognito callback and logout URLs target CloudFront; Bedrock output is `DISABLED` |
-| AWS deployment posture | 22/22 passed | Live read-only verification in `ap-southeast-1`; private/versioned/encrypted S3, signed CloudFront origin, HTTPS and uncached API path, API metrics/logs/throttles, encrypted DynamoDB TTL, public Cognito PKCE client, and Bedrock disabled |
+| AWS deployment posture | 23/23 passed | Main workflow-dispatch run `34024320223` verified the exact Bedrock ARN parameter and `CONNECTED` output plus private/versioned/encrypted S3, signed CloudFront origin, HTTPS and uncached API path, API metrics/logs/throttles, encrypted DynamoDB TTL, and public Cognito PKCE client |
+| AWS alarm-notification bootstrap | Passed | `adaptsg-cicd-bootstrap` reached `UPDATE_COMPLETE`; the execution role can manage only `adaptsg-demo-operations-alarms`, and the GitHub deploy role has read-only attributes access to that topic |
 | Current Python 3.12 CI gate | Passed | Branch run `34012492178` passed correctness, the 90% coverage threshold, dependency audit, Docker build and SAM validate/build; deployment was correctly skipped outside `main` |
-| Windows-local Python 3.12 gate | Platform discrepancy | 191/192 tests passed with 89.88% branch coverage; `tests/test_ui_streamlit_app.py::test_creating_a_plan_shows_the_locked_constraints_and_the_itinerary` rendered blank HTML locally but passed in Linux CI |
+| Latest merged AWS/browser deployment | Passed | Main workflow-dispatch run `34024320223` passed correctness, Docker, SAM, connected configuration deployment, static publishing and 23/23 post-deploy checks at commit `1a2bec4`; no inference smoke ran |
+| Windows-local Python 3.12 gate | Platform discrepancy | 172 tests passed with 90.77% branch coverage on `feature/r4-cost-alerting`; the portable Python distribution lacks the standard-library `venv.EnvBuilder`, so local `pip-audit` cannot start, while the Linux main gate passes dependency audit |
+| Durable trust/location deployment | Passed | PR #36 merged at `e599875`; main run `34022280410` deployed and verified it successfully |
+| Configurable Bedrock rollout branch | 192 tests passed | Python 3.12.10, 90.43% branch coverage; Ruff, strict mypy, Bandit, CloudFormation/SAM lint, workflow YAML and 19 browser-auth tests passed locally; Windows lacks `make` for the custom SAM build and its portable Python still cannot start `pip-audit`, so Linux CI remains authoritative for those two gates |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
 | LAN DNS/TLS/health | Passed | `sim-next.lab.packetcraft.dev` -> `192.168.1.250`; trusted HTTPS 200 |
@@ -93,14 +102,16 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 - [x] Replaced the public AWS Function URL template with an authenticated HTTP API/Cognito/DynamoDB shape.
 - [x] Bound API Gateway-verified Cognito subjects to server-owned journeys.
 - [x] Added the single-caregiver ADR and point-in-time recovery runbook.
-- [ ] Complete transactional DynamoDB persistence for consent, intents and per-resource audit chains.
+- [x] Implement, merge, and deploy transactional DynamoDB persistence for consent, authority grants,
+      intents and per-resource audit chains.
 - [x] Complete the Role 3 static Cognito/PKCE browser client.
 - [ ] Complete live allowlist verification.
-- [ ] Run Python 3.12 full gate, SAM validate/build, staging AWS integration and restore drill.
+- [ ] Complete a DynamoDB point-in-time restore drill in a non-production table.
 - [x] Add local CloudFormation schema lint plus rollback-safe table protection controls.
 - [x] Add explicit OAuth-scoped API routes, privacy-safe API access logs and edge throttling on the Role 4 recovery branch.
 - [x] Add a read-only post-deploy verifier and apply its scoped GitHub role permissions; live demo passed 22/22 checks.
-- [ ] Complete the production-readiness handoffs in `docs/contracts/production-readiness-handoffs.md`.
+- [x] Complete the remaining code handoffs in `docs/contracts/production-readiness-handoffs.md`;
+      merge/deploy and manual operational acceptance remain.
 
 ## Current feature branches and merges
 
@@ -125,22 +136,31 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-api-log-delivery-permissions` | CloudWatch Logs delivery permissions required by authenticated HTTP API access logging | Merged in PR #24; bootstrap and application deployment passed |
 | `feature/r4-aws-web-hosting` | CloudFront/private-S3 static hosting, same-origin API, Cognito self-signup, PKCE runtime contract and CI publishing | Merged in PR #25 and deployed; main run `33976769643` passed all checks and AWS smoke tests |
 | `feature/r4-deployment-posture` | Read-only live verification for token-free AWS security and service wiring | Merged; bootstrap update `UPDATE_COMPLETE`, live stack passed 22/22 checks, and branch run `34012492178` passed correctness, Docker and SAM |
-| `feature/static-browser-cognito` | Restored `public/index.html` and its serving path, added the Cognito PKCE auth layer plus `scripts/test_web_auth.mjs`, retired Streamlit | Merged locally; full gate passed at 90.77% coverage; awaiting AWS deployment/QA |
+| `feature/static-browser-cognito` | Restored `public/index.html` and its serving path, added the Cognito PKCE auth layer plus `scripts/test_web_auth.mjs`, retired Streamlit | Merged in PR #29; main run `34013996057` deployed the static client successfully; independent browser-session QA remains pending |
+| `feature/r4-cost-alerting` | Scoped SNS delivery for Lambda error/throttle alarms plus post-deploy policy verification | Merged in PR #30 |
+| `feature/r3-functional-aws-demo` | Remove stale Vercel browser metadata and reverify the complete static journey/auth flow | Merged in PR #32 |
+| `feature/r4-authenticated-lambda-smoke` | Cognito-aware direct-Lambda smoke plus real unsigned API rejection assertion | Merged in PR #35; deployment passes |
+| `feature/r1-durable-trust-records` | Durable consent/grants/intents, atomic per-journey audit and strict location ambiguity handling | Merged in PR #36; main run `34022280410` deployed successfully |
+| `feature/r4-configurable-bedrock-rollout` | Exact-resource Bedrock rollout variables, capped output, manual deployment trigger, connected-state verification and token-safe smoke behavior | Merged in PR #37; workflow-dispatch run `34024320223` deployed successfully and passed 23/23 posture checks with Bedrock `CONNECTED`; inference smoke was intentionally skipped |
 
 ## External setup still required
 
 1. Request and verify OneMap API token access.
 2. Request SLA approval for BFA routing before setting `ONEMAP_BFA_ENABLED=true`.
 3. Request an LTA DataMall account key.
-4. Confirm the selected Bedrock model is enabled in `us-east-1`.
+4. Complete Anthropic model access if required, verify the Claude Haiku 4.5 global inference profile
+   from `ap-southeast-1`, then run one controlled browser canary and inspect Bedrock token metrics.
 5. Refresh hackathon AWS session credentials immediately before the live demo.
 6. Obtain the required review for AdaptSG PR #9; all CI checks are passing.
 7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
 8. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
-9. Have Roles 1 and 4 derive deployed identity from the verified Cognito `sub` instead of the fixed
-   `demo-caregiver` principal (see `docs/contracts/production-readiness-handoffs.md`).
-10. Exercise Cognito signup, email verification, login, protected API access, and logout in two browsers,
+9. Exercise Cognito signup, email verification, login, protected API access, and logout in two browsers,
     and confirm one authenticated principal cannot read another's journey.
+10. Check current account spending and the hackathon threshold in the Billing console; the workshop
+    organization explicitly denies Cost Explorer API access, and the application stack does not request
+    account-level billing-management permissions.
+11. If operational email alerts are desired, set `ADAPTSG_ALARM_NOTIFICATION_EMAIL` and confirm the
+    SNS subscription.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
 
