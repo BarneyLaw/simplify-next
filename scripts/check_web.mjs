@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const html = readFileSync("public/index.html", "utf8");
 const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
@@ -22,6 +22,7 @@ const require = (condition, message) => {
 };
 
 const markup = html.replace(/<script>[\s\S]*?<\/script>/, "");
+const styles = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
 
 require(
   /<a[^>]+class="skip"[^>]*href="#/.test(markup),
@@ -86,6 +87,49 @@ for (const [, attributes] of markup.matchAll(/<(?:input|textarea|select)\b([^>]*
 for (const [element, inner] of markup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)) {
   const name = inner.replace(/<[^>]*>/g, "").trim() || element.match(/aria-label="([^"]+)"/)?.[1];
   require(Boolean(name), "every button needs a visible label or an aria-label");
+}
+
+// Cascade gates. The page switches views with the hidden attribute alone, and CSS is the
+// half of that contract no other check reads -- which is how commit 80ca854 shipped a
+// stylesheet with no [hidden] rule and painted all seven views down one page.
+
+require(
+  /\[hidden\]\s*\{[^}]*display\s*:\s*none\s*!important/.test(styles),
+  "[hidden]{display:none!important} must be declared, or any author `display` (.work, "
+    + ".band, .btn all set one) beats the UA rule and every view renders at once",
+);
+
+// A rule inside @media carries no extra specificity, so a base rule for the same selector
+// placed after the block wins at every viewport. That is how the mobile top bar went dead.
+const mediaRanges = [...styles.matchAll(/@media[^{]*\{[\s\S]*?\n\}/g)]
+  .map((match) => [match.index, match.index + match[0].length]);
+const inMedia = (index) => mediaRanges.some(([from, to]) => index >= from && index < to);
+
+const displayRules = [];
+for (const match of styles.matchAll(/([^{}@]+)\{([^{}]*)\}/g)) {
+  if (!/(^|[;\s])display\s*:/.test(match[2])) continue;
+  for (const selector of match[1].split(",").map((s) => s.trim()).filter(Boolean)) {
+    displayRules.push({ selector, index: match.index, media: inMedia(match.index) });
+  }
+}
+require(displayRules.length > 0, "no `display` rules were parsed; the stylesheet scan broke");
+for (const rule of displayRules.filter((r) => r.media)) {
+  const shadowed = displayRules.some(
+    (other) => !other.media && other.selector === rule.selector && other.index > rule.index,
+  );
+  require(
+    !shadowed,
+    `\`${rule.selector}\` sets display inside @media but a base rule for it appears later; `
+      + "media queries add no specificity, so the base rule wins at every viewport",
+  );
+}
+
+// A renamed or unexported asset should fail here rather than render as a broken image.
+for (const [, src] of markup.matchAll(/\ssrc="(\/[^"]+)"/g)) {
+  require(
+    existsSync(`public${src}`),
+    `${src} is referenced but missing from public/, so it will 404 once deployed`,
+  );
 }
 
 // The two front ends must tell one provenance story. Both derive their wording from
