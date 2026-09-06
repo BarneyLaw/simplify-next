@@ -38,6 +38,7 @@ from adaptsg.domain import (
     JourneyRequest,
     JourneyState,
     JourneyStatus,
+    Location,
     MonitoringOutcome,
     ParseOutcome,
     PrincipalContext,
@@ -69,12 +70,27 @@ from adaptsg.presentation import itinerary_rows, retained_segment_percentage
 from adaptsg.settings import Settings
 from adaptsg.tools.catalog import VenueCatalog
 from adaptsg.tools.environment import DemoEnvironmentClient
+from adaptsg.tools.location import DemoLocationClient, LocationClient
 from adaptsg.web_api import create_app
 
 
 def test_live_mode_fails_closed_without_production_trust_configuration() -> None:
-    with pytest.raises(Exception, match="retention"):
+    with pytest.raises(Exception, match="ADAPTSG_AUTHENTICATION_MODE"):
         build_service(Settings(adaptsg_mode="live"))
+
+
+def test_local_live_mode_uses_live_providers_with_demo_auth() -> None:
+    service = build_service(
+        Settings(
+            adaptsg_mode="live",
+            adaptsg_local_live_enabled=True,
+            onemap_api_token="test-onemap-token",
+            lta_account_key="test-lta-key",
+        )
+    )
+    assert service.mode == "live"
+    assert service.auth_mode == "demo"
+    assert service.local_live
 
 
 def test_phase_two_models_reject_unknown_fields_and_prohibited_risk_is_typed() -> None:
@@ -284,6 +300,7 @@ def make_service(
     replanner: JourneyReplanner,
     *,
     environment: DemoEnvironmentClient | None = None,
+    location: LocationClient | None = None,
     store: JourneyStore | None = None,
     clock: Any | None = None,
     ttl_hours: int = 24,
@@ -293,6 +310,7 @@ def make_service(
         planner=planner,
         replanner=replanner,
         environment=environment or DemoEnvironmentClient(),
+        location=location,
         store=store,
         clock=clock,
         ttl_hours=ttl_hours,
@@ -321,6 +339,27 @@ def start_and_approve(service: AdaptSGService, *, suffix: str = "base") -> Journ
         expected_version=draft.version,
         idempotency_key=f"approve-{suffix}-key",
     )
+
+
+def test_start_location_is_resolved_before_live_planning(
+    planner: JourneyPlanner, replanner: JourneyReplanner
+) -> None:
+    service = make_service(
+        planner,
+        replanner,
+        location=DemoLocationClient(),
+    )
+
+    draft = service.start_journey(
+        "Plan a safe day starting from City Hall.",
+        journey_date=date(2026, 9, 2),
+        idempotency_key="resolve-city-hall-1",
+    )
+
+    assert draft.pending_initial_itinerary is not None
+    first_route = draft.pending_initial_itinerary.segments[0].route
+    assert first_route.origin_label == "City Hall"
+    assert first_route.origin == Location(lat=1.2931, lng=103.8520)
 
 
 def test_journey_state_rejects_invalid_lifecycle(itinerary: Itinerary) -> None:
@@ -1174,6 +1213,50 @@ def test_fastapi_stateful_approval_and_replan(
     )
     assert rejected.status_code == 200
     assert rejected.json()["current_itinerary"]["id"] == active["current_itinerary"]["id"]
+
+
+def test_fastapi_accepts_lunch_time_change_trigger(
+    planner: JourneyPlanner,
+    replanner: JourneyReplanner,
+) -> None:
+    client = TestClient(create_app(make_service(planner, replanner)))
+    plan = client.post(
+        "/api/journeys",
+        headers={"Idempotency-Key": "http-lunch-plan"},
+        json={
+            "prompt": "Plan 10 am-5 pm for a wheelchair user, lunch by 1 pm, budget $70.",
+            "journey_date": "2026-09-01",
+        },
+    )
+    draft = plan.json()
+    approved = client.post(
+        f"/api/journeys/{draft['journey_id']}/decision",
+        headers={"Idempotency-Key": "http-lunch-approve"},
+        json={
+            "target_id": draft["pending_initial_itinerary"]["id"],
+            "decision": "approve",
+            "expected_version": draft["version"],
+        },
+    )
+    active = approved.json()
+
+    replanned = client.post(
+        f"/api/journeys/{draft['journey_id']}/replan",
+        headers={"Idempotency-Key": "http-lunch-replan"},
+        json={
+            "expected_version": active["version"],
+            "trigger": {
+                "type": "lunch_time_changed",
+                "message": "Lunch moved earlier",
+                "new_lunch_latest": "12:30:00",
+            },
+        },
+    )
+
+    assert replanned.status_code == 200
+    proposal = replanned.json()["latest_replan_proposal"]
+    assert proposal["validation"]["valid"]
+    assert proposal["itinerary"]["request"]["hard"]["lunch_latest"] == "12:30:00"
 
 
 def test_fastapi_rejects_invalid_and_infeasible_requests(

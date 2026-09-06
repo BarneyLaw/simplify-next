@@ -31,6 +31,7 @@ from adaptsg.domain import (
     EnvironmentSnapshot,
     FeatureFlag,
     Itinerary,
+    JourneyRequest,
     JourneyState,
     JourneyStatus,
     MonitoringOutcome,
@@ -60,6 +61,7 @@ from adaptsg.errors import (
     OperationInProgress,
     RetentionConfigurationMissing,
     StaleJourneyVersion,
+    ToolUnavailable,
 )
 from adaptsg.planning import JourneyPlanner, JourneyReplanner
 from adaptsg.preference_parser import BedrockPreferenceParser, PreferenceParser
@@ -70,6 +72,7 @@ from adaptsg.tools.environment import (
     EnvironmentClient,
     LiveEnvironmentClient,
 )
+from adaptsg.tools.location import DemoLocationClient, LocationClient, OneMapLocationClient
 from adaptsg.tools.routing import DemoRoutingClient, OneMapRoutingClient
 from adaptsg.validation import ItineraryValidator
 
@@ -654,9 +657,11 @@ class AdaptSGService:
         planner: JourneyPlanner,
         replanner: JourneyReplanner,
         environment: EnvironmentClient,
+        location: LocationClient | None = None,
         store: JourneyStore | None = None,
         ttl_hours: int = 24,
         mode: str = "demo",
+        local_live: bool = False,
         clock: Clock | None = None,
         policy: CapabilityResolver | None = None,
         audit: AuditStore | None = None,
@@ -667,10 +672,12 @@ class AdaptSGService:
         self.planner = planner
         self.replanner = replanner
         self.environment = environment
+        self.location = location
         self._clock = clock or (lambda: datetime.now(UTC))
         self.store = store or InMemoryJourneyStore(clock=self._clock)
         self.ttl = timedelta(hours=ttl_hours)
         self.mode = mode
+        self.local_live = local_live
         self.policy = policy or CapabilityResolver()
         self.audit = audit or InMemoryAuditStore()
         self.consent_policy_version = consent_policy_version
@@ -688,6 +695,10 @@ class AdaptSGService:
     def storage_mode(self) -> str:
         return self.store.storage_mode
 
+    @property
+    def auth_mode(self) -> str:
+        return "demo" if self.local_live else self.mode
+
     def _build_plan_graph(self) -> object:
         graph = StateGraph(PlanGraphState)
 
@@ -703,8 +714,9 @@ class AdaptSGService:
                 return {}
             parsed = state["parsed"]
             try:
+                request = self._resolve_start_location(parsed.request)
                 itinerary = self.planner.create(
-                    parsed.request,
+                    request,
                     parser_source=parsed.source,
                 )
                 return {"itinerary": itinerary}
@@ -730,6 +742,19 @@ class AdaptSGService:
             itinerary=result["itinerary"],
             warnings=parsed.warnings,
             token_usage=parsed.token_usage,
+        )
+
+    def _resolve_start_location(self, request: JourneyRequest) -> JourneyRequest:
+        if self.location is None:
+            return request
+        results = self.location.search(request.start_label)
+        if not results:
+            raise ToolUnavailable(
+                f"location verification returned no result for {request.start_label!r}"
+            )
+        selected = results[0]
+        return request.model_copy(
+            update={"start_label": selected.label, "start_location": selected.location}
         )
 
     def start_journey(
@@ -844,7 +869,7 @@ class AdaptSGService:
         self._require_actor(actor, Capability.JOURNEY_WRITE)
         current_for_auth = self.get_journey(journey_id, principal=actor)
         self._require_processing_consent(actor, current_for_auth)
-        if self.mode == "live" and intent_id is None:
+        if self.mode == "live" and not self.local_live and intent_id is None:
             raise IntentConflict("a prepared action intent is required")
         fingerprint = self._fingerprint(
             {
@@ -1100,7 +1125,7 @@ class AdaptSGService:
     def _require_processing_consent(
         self, principal: PrincipalContext, state: JourneyState | None = None
     ) -> ConsentRecord | None:
-        if self.mode != "live":
+        if self.mode != "live" or self.local_live:
             return None
         record = self.consent.find_current(
             subject=principal.principal_id,
@@ -1297,29 +1322,48 @@ class AdaptSGService:
 def build_service(settings: Settings | None = None) -> AdaptSGService:
     resolved = settings or get_settings()
     live_requirements = (
-        resolved.adaptsg_authentication_mode == "cognito",
-        bool(resolved.adaptsg_cognito_issuer),
-        bool(resolved.adaptsg_cognito_audience),
-        resolved.adaptsg_authentication_configured,
-        resolved.adaptsg_encryption_configured,
-        resolved.adaptsg_audit_storage_configured,
-        resolved.adaptsg_production_retention_configured,
-        bool(resolved.adaptsg_audit_retention_days),
-        bool(resolved.adaptsg_revoked_consent_retention_days),
-        bool(resolved.adaptsg_consent_policy_version),
-        resolved.adaptsg_live_catalog_configured,
-        bool(resolved.adaptsg_catalog_version),
-        bool(resolved.adaptsg_cost_model_version),
-        resolved.adaptsg_input_token_tariff_sgd is not None,
-        resolved.adaptsg_output_token_tariff_sgd is not None,
-        resolved.adaptsg_journeys_table,
-        resolved.onemap_api_token,
-        resolved.lta_account_key,
+        ("ADAPTSG_AUTHENTICATION_MODE", resolved.adaptsg_authentication_mode == "cognito"),
+        ("ADAPTSG_COGNITO_ISSUER", bool(resolved.adaptsg_cognito_issuer)),
+        ("ADAPTSG_COGNITO_AUDIENCE", bool(resolved.adaptsg_cognito_audience)),
+        ("ADAPTSG_AUTHENTICATION_CONFIGURED", resolved.adaptsg_authentication_configured),
+        ("ADAPTSG_ENCRYPTION_CONFIGURED", resolved.adaptsg_encryption_configured),
+        ("ADAPTSG_AUDIT_STORAGE_CONFIGURED", resolved.adaptsg_audit_storage_configured),
+        (
+            "ADAPTSG_PRODUCTION_RETENTION_CONFIGURED",
+            resolved.adaptsg_production_retention_configured,
+        ),
+        ("ADAPTSG_AUDIT_RETENTION_DAYS", bool(resolved.adaptsg_audit_retention_days)),
+        (
+            "ADAPTSG_REVOKED_CONSENT_RETENTION_DAYS",
+            bool(resolved.adaptsg_revoked_consent_retention_days),
+        ),
+        ("ADAPTSG_CONSENT_POLICY_VERSION", bool(resolved.adaptsg_consent_policy_version)),
+        ("ADAPTSG_LIVE_CATALOG_CONFIGURED", resolved.adaptsg_live_catalog_configured),
+        ("ADAPTSG_CATALOG_VERSION", bool(resolved.adaptsg_catalog_version)),
+        ("ADAPTSG_COST_MODEL_VERSION", bool(resolved.adaptsg_cost_model_version)),
+        (
+            "ADAPTSG_INPUT_TOKEN_TARIFF_SGD",
+            resolved.adaptsg_input_token_tariff_sgd is not None,
+        ),
+        (
+            "ADAPTSG_OUTPUT_TOKEN_TARIFF_SGD",
+            resolved.adaptsg_output_token_tariff_sgd is not None,
+        ),
+        ("ADAPTSG_JOURNEYS_TABLE", bool(resolved.adaptsg_journeys_table)),
+        ("ONEMAP_API_TOKEN", bool(resolved.onemap_api_token)),
+        ("LTA_ACCOUNT_KEY", bool(resolved.lta_account_key)),
     )
-    if resolved.adaptsg_mode == "live" and not all(live_requirements):
+    missing_live_requirements = tuple(
+        name for name, configured in live_requirements if not configured
+    )
+    if (
+        resolved.adaptsg_mode == "live"
+        and not resolved.adaptsg_local_live_enabled
+        and missing_live_requirements
+    ):
         raise RetentionConfigurationMissing(
-            "live mode requires Cognito, durable encrypted storage, concrete retention, "
-            "current consent/catalog/cost policy, and live provider configuration"
+            "live mode requires production policy and provider configuration; missing: "
+            + ", ".join(missing_live_requirements)
         )
     enabled_flags = frozenset(
         flag
@@ -1340,6 +1384,11 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
     )
     catalog = VenueCatalog()
     validator = ItineraryValidator(max_replans=resolved.adaptsg_max_replans)
+    location = (
+        DemoLocationClient()
+        if resolved.adaptsg_mode == "demo"
+        else OneMapLocationClient(token=resolved.onemap_api_token or "")
+    )
     routing = (
         DemoRoutingClient()
         if resolved.adaptsg_mode == "demo"
@@ -1385,9 +1434,11 @@ def build_service(settings: Settings | None = None) -> AdaptSGService:
         planner=planner,
         replanner=replanner,
         environment=environment,
+        location=location,
         store=store,
         ttl_hours=resolved.adaptsg_journey_ttl_hours,
         mode=resolved.adaptsg_mode,
+        local_live=resolved.adaptsg_local_live_enabled,
         policy=policy,
         consent_policy_version=resolved.adaptsg_consent_policy_version or None,
         consent_categories=frozenset(
