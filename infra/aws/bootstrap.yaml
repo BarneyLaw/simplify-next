@@ -368,6 +368,36 @@ Resources:
                   - cloudfront:CreateInvalidation
                   - cloudfront:GetInvalidation
                 Resource: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*"
+              - Sid: VerifyPrivateApplicationBuckets
+                Effect: Allow
+                Action:
+                  - s3:GetBucketPolicyStatus
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:GetBucketVersioning
+                  - s3:GetEncryptionConfiguration
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${AWS::AccountId}-${AWS::Region}-${ApplicationStackName}-evidence"
+                  - !Sub "arn:${AWS::Partition}:s3:::${AWS::AccountId}-${AWS::Region}-${ApplicationStackName}-web"
+              - Sid: VerifyCloudFrontDelivery
+                Effect: Allow
+                Action: cloudfront:GetDistribution
+                Resource: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*"
+              - Sid: VerifyApiStage
+                Effect: Allow
+                Action: apigateway:GET
+                Resource: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/*/stages/*"
+              - Sid: VerifyDynamoDbState
+                Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:DescribeTimeToLive
+                Resource: !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-state-v2"
+              - Sid: VerifyCognitoBoundary
+                Effect: Allow
+                Action:
+                  - cognito-idp:DescribeUserPool
+                  - cognito-idp:DescribeUserPoolClient
+                Resource: !Sub "arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*"
               - Sid: PassCloudFormationRole
                 Effect: Allow
                 Action: iam:PassRole

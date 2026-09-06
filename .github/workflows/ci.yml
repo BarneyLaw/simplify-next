@@ -399,6 +399,11 @@ jobs:
           assert Path("web-index.html").stat().st_size > 0
           print("CloudFront web, runtime auth configuration, and same-origin API passed.")
           PY
+      - name: Verify deployed AWS security and service posture
+        run: >-
+          python infra/aws/verify_deployment.py
+          --stack-name "${ADAPTSG_STACK_NAME}"
+          --region "${AWS_REGION}"
       - name: Record deployed resources
         shell: bash
         run: |
