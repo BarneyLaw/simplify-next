@@ -49,6 +49,83 @@ a safety regression, not a styling one:
    refresh is a fifth, distinct case: callers must route to the signed-out view, not render a
    generic transport alert or reactivate the view they were on.
 
+## Design system
+
+`docs/DESIGN.md` is the durable reference: an achromatic system where hierarchy comes from
+typographic weight, size and tone. Read its "Deviations" section before changing any colour or
+type value -- it records the four places where following the reference literally would break an
+AdaptSG requirement (safety chroma, the scaled-up type ramp, achromatic provenance, and the
+translucent nav).
+
+Two rules in it are load-bearing and easy to undo by accident, so `scripts/check_web.mjs` enforces
+both:
+
+- **`--ash` (`#adadad`) is a borders-and-fills token.** At 2.2:1 on white it must never appear in
+  a `color:` declaration; text uses `--muted` (4.9:1) or `--disabled` (4.5:1).
+- **The weights need the variable axis.** The font is imported as `Inter:wght@400..700`. A list of
+  static instances would make the browser snap 440, 456 and 652 to 400 and 600 silently.
+
+A third is not mechanically checkable and so is yours to hold: **the nav pill is the only
+translucent surface, and everything inside it that carries text keeps an opaque ground.** Through
+`--veil`, `--disabled` measures 4.2:1 on plain canvas and 2.5:1 over a `--breach` chip, so a pill
+without its own fill fails AA depending only on what happens to be scrolling behind it.
+
+## View switching
+
+`activateView()` toggles the `hidden` attribute and nothing else -- there is no `.hidden` class,
+and `check_web.mjs` forbids adding one, because the attribute is what reaches assistive tech.
+That makes the CSS half of the contract: the UA rule `[hidden]{display:none}` loses to any author
+rule setting `display`, and `.work`, `.band` and `.btn` all set one. `80ca854` replaced the
+stylesheet and dropped `[hidden]{display:none!important}`, and every view rendered stacked down
+one page until it was restored. The rule is now gated; do not remove it.
+
+The same cascade rule caught a second bug: a rule inside `@media` carries no extra specificity, so
+a base rule for the same selector placed *after* the block wins at every viewport. `check_web.mjs`
+now fails on that shape too.
+
+## The mascot
+
+`src/adaptsg/assets/mascot.png` is the master; `public/mascot-{128,512}.png` are derived and are
+what the page references.
+
+**The master is already keyed.** It arrives as RGBA with 65.4% of its pixels at alpha 0, and
+composited on white it is a crisp plane with a blue outline and nothing else. An earlier master was
+art on an opaque black plate with a baked-in neon glow, and the flood-fill recipe that used to live
+here preserved that glow as opaque paint -- which is exactly the blue field that shipped in the
+derived files and had to be re-derived out. If a future master ever arrives on a plate again, key
+it before it is committed; the derivation step below stays a resize and nothing more.
+
+To regenerate, crop to the alpha bbox and resize -- but **premultiply across the resize**. The
+transparent field is RGB black at alpha 0 and Pillow resizes the four channels independently, so a
+plain LANCZOS pass bleeds black into every edge. Pillow is not a declared dev dependency, so this
+is a one-off, not a committed script:
+
+```python
+from PIL import Image
+import numpy as np
+
+master = Image.open("src/adaptsg/assets/mascot.png").convert("RGBA")
+master = master.crop(master.getchannel("A").getbbox())  # 1397x961
+
+src = np.asarray(master).astype(np.float64)
+src[..., :3] *= src[..., 3:4] / 255.0  # premultiply
+premul = Image.fromarray(src.round().astype(np.uint8), "RGBA")
+
+for width in (512, 128):
+    height = round(width * master.height / master.width)  # 352, 88
+    small = np.asarray(premul.resize((width, height), Image.LANCZOS)).astype(np.float64)
+    alpha = small[..., 3:4]
+    small[..., :3] = np.where(alpha > 0, small[..., :3] * 255.0 / np.maximum(alpha, 1), 0)
+    Image.fromarray(small.clip(0, 255).round().astype(np.uint8), "RGBA").save(
+        f"public/mascot-{width}.png", optimize=True
+    )
+```
+
+Check the result on a checkerboard, not on white: a residual field is invisible against `--canvas`,
+which is how the last one shipped. Then update the `width`/`height` on all three
+`<img class="mark">` tags if the crop changed the aspect -- `.mark` renders from `width:auto` and a
+fixed height, so the attributes only reserve layout, but a wrong pair makes the page jump on load.
+
 ## Definition of done
 
 Done means the plan diff and approval choice are obvious, keyboard and contrast checks pass, the
