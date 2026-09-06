@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from adaptsg import aws_handler
+import adaptsg.aws_handler as aws_handler
 from infra.aws.verify_deployment import AwsReader, verify_deployment
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
