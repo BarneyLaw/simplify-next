@@ -125,13 +125,16 @@ ol,ul{margin:0;padding:0;list-style:none}
   box-shadow:var(--shadow-lift);padding:16px;display:flex;flex-direction:column;gap:10px}
 .maphead{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .mapcanvas{position:relative;height:300px;border-radius:6px;background:var(--white);
-  border:1px solid var(--line);overflow:hidden}
-.pin{position:absolute;display:flex;align-items:center;gap:6px;transform:translate(-50%,-50%)}
+  border:1px solid var(--line);overflow:hidden;contain:layout paint}
+.pin{position:absolute;display:flex;align-items:center;gap:6px;z-index:1;max-width:calc(100% - 12px)}
+.pin-right{transform:translate(0,-50%)}
+.pin-left{transform:translate(-100%,-50%);flex-direction:row-reverse}
 .pin b{width:26px;height:26px;border-radius:50%;background:var(--blue-300);border:2px solid var(--blue-800);
   color:var(--blue-800);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;
   font-style:normal}
 .pin span{font-size:13px;background:rgba(255,255,255,.92);padding:2px 6px;border-radius:4px;
-  border:1px solid var(--line);white-space:nowrap;color:var(--ink)}
+  border:1px solid var(--line);white-space:normal;color:var(--ink);line-height:1.2;
+  min-width:0;max-width:clamp(110px,30%,190px);overflow-wrap:anywhere}
 .mapnote{font-size:13px;color:var(--muted)}
 
 details{border:1px solid var(--line);border-radius:var(--r);background:var(--white)}
@@ -169,7 +172,11 @@ details.tech .ev{padding:0 14px 14px;border-top:1px solid var(--line);padding-to
   .track{width:60px}
   .ev{grid-template-columns:minmax(0,1fr);gap:2px 0}
   .ev dt{margin-top:10px;font-weight:600}
+  .map{padding:14px}
   .mapcanvas{height:240px}
+  .pin{gap:4px}
+  .pin b{width:24px;height:24px;font-size:12px}
+  .pin span{font-size:12px;max-width:132px;padding:3px 5px}
 }
 
 /* --- Streamlit chrome overrides: reskin native widgets to the tokens above --- */

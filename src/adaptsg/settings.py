@@ -1,4 +1,4 @@
-"""Environment-backed application configuration with safe demo defaults."""
+"""Environment-backed application configuration for live provider operation."""
 
 from functools import lru_cache
 from typing import Literal
@@ -15,12 +15,14 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    adaptsg_mode: Literal["demo", "live"] = "demo"
+    adaptsg_mode: Literal["demo", "live"] = "live"
+    adaptsg_local_live_enabled: bool = False
     adaptsg_log_level: str = "INFO"
     aws_region: str = "us-east-1"
     aws_profile: str | None = None
     bedrock_model_id: str = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
     bedrock_max_tokens: int = Field(default=1_200, ge=128, le=4_096)
+    adaptsg_use_bedrock: bool = False
     adaptsg_approval_cost_increase_sgd: float = Field(default=8, ge=0)
     adaptsg_max_replans: int = Field(default=2, ge=1, le=3)
     adaptsg_journeys_table: str | None = None

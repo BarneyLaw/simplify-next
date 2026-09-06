@@ -1,4 +1,7 @@
+import os
 from datetime import date
+
+os.environ["ADAPTSG_MODE"] = "demo"
 
 import pytest
 

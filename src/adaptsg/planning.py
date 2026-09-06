@@ -280,7 +280,49 @@ class JourneyReplanner:
             return self._fatigue_candidates(itinerary)
         if trigger.type is TriggerType.BUDGET_REDUCTION:
             return self._budget_candidates(itinerary, trigger)
+        if trigger.type in {
+            TriggerType.LUNCH_TIME_CHANGED,
+            TriggerType.APPOINTMENT_CHANGED,
+        }:
+            return self._time_change_candidates(itinerary, trigger)
         return self._replacement_candidates(itinerary, trigger)
+
+    def _time_change_candidates(
+        self, itinerary: Itinerary, trigger: ReplanTrigger
+    ) -> tuple[Itinerary, ...]:
+        hard_updates: dict[str, object] = {}
+        if trigger.type is TriggerType.LUNCH_TIME_CHANGED:
+            hard_updates["lunch_latest"] = trigger.new_lunch_latest
+        else:
+            if trigger.new_finish_by is not None and (
+                trigger.new_finish_by <= itinerary.request.start_time
+            ):
+                raise NoFeasibleItinerary("the new appointment time must follow the journey start")
+            hard_updates["finish_by"] = trigger.new_finish_by
+
+        request = itinerary.request.model_copy(
+            update={"hard": itinerary.request.hard.model_copy(update=hard_updates)}
+        )
+        venues = tuple(segment.venue for segment in itinerary.segments)
+        purposes = tuple(segment.purpose for segment in itinerary.segments)
+        modes = tuple(segment.route.mode for segment in itinerary.segments)
+        durations = tuple(
+            round((segment.activity_end - segment.activity_start).total_seconds() / 60)
+            for segment in itinerary.segments
+        )
+        try:
+            candidate = self.planner._schedule(
+                request=request,
+                venues=venues,
+                purposes=purposes,
+                parser_source=itinerary.parser_source,
+                replan_count=itinerary.replan_count + 1,
+                modes=modes,
+                durations=durations,
+            )
+        except ToolUnavailable:
+            return ()
+        return (candidate,)
 
     def _replacement_candidates(
         self, itinerary: Itinerary, trigger: ReplanTrigger

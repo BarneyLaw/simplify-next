@@ -416,10 +416,10 @@ def render_active_view(itinerary: Itinerary, mode: str) -> None:
     # Re-read: `check_conditions()` may have just updated this mid-render, above.
     refreshed_monitoring = state_value("monitoring")
     if isinstance(refreshed_monitoring, MonitoringOutcome):
+        snapshot = refreshed_monitoring.snapshot
         st.info(
-            f"Conditions: {refreshed_monitoring.snapshot.weather_summary}; 24-hour PSI "
-            f"{refreshed_monitoring.snapshot.psi}. "
-            f"{environment_provenance_label(refreshed_monitoring.snapshot, mode=mode)}"
+            f"{ui.conditions_summary(snapshot, itinerary)} "
+            f"{environment_provenance_label(snapshot, mode=mode)}"
         )
         if refreshed_monitoring.triggers:
             for trigger in refreshed_monitoring.triggers:

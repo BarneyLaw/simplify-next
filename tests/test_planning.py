@@ -103,6 +103,50 @@ def test_budget_replan_and_missing_budget(
         )
 
 
+def test_lunch_time_change_replans_against_the_new_hard_deadline(
+    itinerary: Itinerary, replanner: JourneyReplanner
+) -> None:
+    proposal = replanner.propose(
+        itinerary,
+        ReplanTrigger(
+            type=TriggerType.LUNCH_TIME_CHANGED,
+            message="Lunch moved earlier",
+            new_lunch_latest=time(12, 30),
+        ),
+    )
+
+    lunch = next(
+        segment for segment in proposal.itinerary.segments if segment.purpose.value == "lunch"
+    )
+    assert proposal.validation.valid
+    assert proposal.itinerary.request.hard.lunch_latest == time(12, 30)
+    assert lunch.activity_start.time() <= time(12, 30)
+
+
+def test_appointment_time_change_replans_against_the_new_finish_deadline(
+    itinerary: Itinerary, replanner: JourneyReplanner
+) -> None:
+    proposal = replanner.propose(
+        itinerary,
+        ReplanTrigger(
+            type=TriggerType.APPOINTMENT_CHANGED,
+            message="Appointment moved earlier",
+            new_finish_by=time(16, 30),
+        ),
+    )
+
+    assert proposal.validation.valid
+    assert proposal.itinerary.request.hard.finish_by == time(16, 30)
+    assert proposal.itinerary.segments[-1].activity_end.time() <= time(16, 30)
+
+
+def test_time_change_trigger_requires_the_new_deadline() -> None:
+    with pytest.raises(ValueError, match="new_lunch_latest"):
+        ReplanTrigger(type=TriggerType.LUNCH_TIME_CHANGED, message="Lunch moved")
+    with pytest.raises(ValueError, match="new_finish_by"):
+        ReplanTrigger(type=TriggerType.APPOINTMENT_CHANGED, message="Appointment moved")
+
+
 def test_no_affected_segment_returns_valid_unchanged_plan(
     itinerary: Itinerary, replanner: JourneyReplanner
 ) -> None:
