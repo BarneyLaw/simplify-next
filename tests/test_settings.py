@@ -26,6 +26,19 @@ def test_bedrock_switch_accepts_deployed_and_legacy_environment_names(
     assert Settings(_env_file=None).adaptsg_bedrock_enabled
 
 
+def test_bedrock_region_and_us_profile_are_independent_of_application_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AWS_REGION", "ap-southeast-1")
+    monkeypatch.setenv("BEDROCK_REGION", "us-east-1")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.aws_region == "ap-southeast-1"
+    assert settings.bedrock_region == "us-east-1"
+    assert settings.bedrock_model_id == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+
 def test_blank_optional_numeric_settings_load_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     """.env.example ships these blank, so a copied .env must not fail validation."""
     for name in BLANK_OPTIONAL_NUMERIC_VARS:

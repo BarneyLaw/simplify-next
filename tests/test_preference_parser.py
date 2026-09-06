@@ -1,5 +1,6 @@
 from datetime import date, time
 from typing import Any
+from unittest.mock import Mock, patch
 
 import pytest
 from botocore.exceptions import ClientError
@@ -163,6 +164,27 @@ def test_live_mode_does_not_call_bedrock_without_explicit_opt_in() -> None:
     outcome = parser.parse("Plan it", journey_date=date(2026, 9, 2))
     assert outcome.source == "deterministic_fallback_v1"
     assert client.calls == []
+
+
+def test_bedrock_client_uses_its_explicit_runtime_region() -> None:
+    client = object()
+    session = Mock()
+    session.client.return_value = client
+    parser = BedrockPreferenceParser(
+        settings=Settings(
+            _env_file=None,
+            aws_region="ap-southeast-1",
+            bedrock_region="us-east-1",
+            adaptsg_bedrock_enabled=True,
+        ),
+        catalog=VenueCatalog(),
+    )
+
+    with patch("adaptsg.preference_parser.boto3.Session", return_value=session) as factory:
+        assert parser._bedrock_client() is client
+
+    factory.assert_called_once_with(profile_name=None, region_name="us-east-1")
+    session.client.assert_called_once_with("bedrock-runtime")
 
 
 def test_clean_json_rejects_non_json() -> None:

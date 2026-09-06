@@ -266,7 +266,7 @@ class BedrockPreferenceParser:
         if self._client is None:
             session = boto3.Session(
                 profile_name=self.settings.aws_profile or None,
-                region_name=self.settings.aws_region,
+                region_name=self.settings.bedrock_region or self.settings.aws_region,
             )
             self._client = session.client("bedrock-runtime")
         return self._client
