@@ -145,18 +145,41 @@ so the LangGraph flow can be tested without AWS credentials. It posts to the Ope
 `/chat/completions` endpoint with the same system prompt and `ConstraintExtraction` schema as
 Bedrock, and falls back to the deterministic parser on any transport, HTTP or validation failure.
 
-Start LM Studio, load a model, enable its local server on port 1234, then:
+Start LM Studio, load a chat model, enable its local server on port 1234, then list what is loaded:
+
+```sh
+python -c "import httpx; [print(m['id']) for m in httpx.get('http://localhost:1234/v1/models').json()['data']]"
+```
+
+`build_service()` refuses live mode without the full production posture, so a local run also needs
+`ADAPTSG_LOCAL_LIVE_ENABLED=true`. That flag makes the service report itself as `demo` to the UI, so
+live-looking times and prices are never presented as verified:
 
 ```sh
 ADAPTSG_MODE=live \
+ADAPTSG_LOCAL_LIVE_ENABLED=true \
 ADAPTSG_LLM_PROVIDER=lmstudio \
-LMSTUDIO_MODEL_ID="$(curl -s http://localhost:1234/v1/models | python -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])')" \
+LMSTUDIO_MODEL_ID=<id from the command above> \
 python -c "
 from datetime import date
 from adaptsg.agent import build_service
 print(build_service().parser.parse('Plan 10am-4pm from Bishan, must visit National Gallery, budget \$60', journey_date=date.today()))
 "
 ```
+
+A `source` of `lmstudio:<model>` with empty warnings means the model was used. A source of
+`deterministic_fallback_v1` means extraction failed and the conservative parser answered instead.
+
+**Reasoning models need a larger budget.** Models that think before answering spend
+`completion_tokens` on reasoning first. At the 1200-token default they can hit `finish_reason:
+length` and return empty content, which shows up as a silent fallback. A 27B reasoning model needed
+about 1400 reasoning tokens and 106 seconds for one extraction, so raise both ceilings:
+
+```sh
+LMSTUDIO_MAX_TOKENS=4096 LMSTUDIO_TIMEOUT_SECONDS=600
+```
+
+Non-reasoning instruct models work at the defaults and answer in a few seconds.
 
 Selecting `lmstudio` is itself the opt-in; `ADAPTSG_USE_BEDROCK` still gates Bedrock separately.
 `ADAPTSG_MODE=demo` makes no LLM call under either provider.
