@@ -46,6 +46,17 @@ def test_deterministic_parser_extracts_hard_and_soft_constraints() -> None:
     assert request.soft.avoid_crowds
 
 
+def test_deterministic_parser_preserves_qualified_location_labels() -> None:
+    parser = DeterministicPreferenceParser(VenueCatalog())
+
+    outcome = parser.parse(
+        "Plan a day starting from Toa Payoh MRT Station (NS19).",
+        journey_date=date(2026, 9, 2),
+    )
+
+    assert outcome.request.start_label == "Toa Payoh MRT Station (NS19)"
+
+
 @pytest.mark.parametrize(
     "wording",
     (

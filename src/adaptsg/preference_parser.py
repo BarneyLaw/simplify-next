@@ -160,7 +160,7 @@ class DeterministicPreferenceParser:
     @staticmethod
     def _start_label(prompt: str) -> str:
         match = re.search(
-            r"(?:starting|start)\s+(?:from|at)\s+([A-Za-z ]+?)(?:[,.]|$)",
+            r"(?:starting|start)\s+(?:from|at)\s+([A-Za-z0-9 &'()/-]+?)(?:[,.]|$)",
             prompt,
             flags=re.IGNORECASE,
         )
