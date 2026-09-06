@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date, time
+from datetime import date, datetime, time, timedelta
 from typing import Any, ClassVar, Protocol
 
 import boto3
@@ -40,6 +40,17 @@ def _defaulted_origin_warnings(prompt: str, start_label: str) -> tuple[str, ...]
     if DeterministicPreferenceParser._explicit_start_label(prompt) is not None:
         return ()
     return (DEFAULTED_ORIGIN_WARNING,)
+
+
+def _defaulted_lunch_warnings(prompt: str, start_time: time, lunch_latest: time) -> tuple[str, ...]:
+    if DeterministicPreferenceParser._explicit_lunch_time(prompt) is not None:
+        return ()
+    if start_time < time(13):
+        return ()
+    return (
+        f"No lunch deadline was named; it was defaulted to {lunch_latest.strftime('%H:%M')} "
+        "for the afternoon start.",
+    )
 
 
 class PreferenceParser(Protocol):
@@ -145,6 +156,7 @@ class DeterministicPreferenceParser:
 
     def parse(self, prompt: str, *, journey_date: date) -> ParseOutcome:
         lowered = prompt.casefold()
+        start_time, finish_by = self._time_range(prompt)
         mentioned_venue_ids = self._mentioned_venue_ids(lowered)
         required_venue_ids = self._required_venue_ids(lowered)
         extraction = ConstraintExtraction(
@@ -174,9 +186,9 @@ class DeterministicPreferenceParser:
             avoid_crowds="avoid crowds" in lowered,
             scenic_route="scenic" in lowered,
             start_label=self._start_label(prompt),
-            start_time=self._time_range(prompt)[0],
-            finish_by=self._time_range(prompt)[1],
-            lunch_latest=self._lunch_time(prompt),
+            start_time=start_time,
+            finish_by=finish_by,
+            lunch_latest=self._lunch_time(prompt, start_time=start_time, finish_by=finish_by),
         )
         return ParseOutcome(
             request=extraction.to_request(journey_date),
@@ -184,6 +196,7 @@ class DeterministicPreferenceParser:
             warnings=(
                 "Bedrock was not called; review extracted constraints before use.",
                 *_defaulted_origin_warnings(prompt, extraction.start_label),
+                *_defaulted_lunch_warnings(prompt, extraction.start_time, extraction.lunch_latest),
             ),
         )
 
@@ -266,14 +279,24 @@ class DeterministicPreferenceParser:
         )
 
     @staticmethod
-    def _lunch_time(prompt: str) -> time:
+    def _lunch_time(prompt: str, *, start_time: time, finish_by: time) -> time:
+        explicit = DeterministicPreferenceParser._explicit_lunch_time(prompt)
+        if explicit is not None:
+            return explicit
+        if start_time < time(13):
+            return time(13)
+        adjusted = (datetime.combine(date.min, start_time) + timedelta(hours=1)).time()
+        return min(adjusted, finish_by)
+
+    @staticmethod
+    def _explicit_lunch_time(prompt: str) -> time | None:
         match = re.search(
             r"lunch\s+(?:before|by)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)",
             prompt,
             flags=re.IGNORECASE,
         )
         if not match:
-            return time(13, 0)
+            return None
         return DeterministicPreferenceParser._clock(match.group(1), match.group(2), match.group(3))
 
     @staticmethod
@@ -318,6 +341,7 @@ class BedrockPreferenceParser:
             content = response["output"]["message"]["content"]
             extraction = self._extract_response(content)
             extraction = self._reconcile_start_label(prompt, extraction)
+            extraction = self._reconcile_lunch_deadline(prompt, extraction)
             extraction = self._reconcile_venue_preferences(prompt, extraction)
             if extraction.unmatched_place_names:
                 unavailable = ", ".join(extraction.unmatched_place_names)
@@ -329,7 +353,12 @@ class BedrockPreferenceParser:
             return ParseOutcome(
                 request=extraction.to_request(journey_date),
                 source=f"bedrock:{self.settings.bedrock_model_id}",
-                warnings=_defaulted_origin_warnings(prompt, extraction.start_label),
+                warnings=(
+                    *_defaulted_origin_warnings(prompt, extraction.start_label),
+                    *_defaulted_lunch_warnings(
+                        prompt, extraction.start_time, extraction.lunch_latest
+                    ),
+                ),
                 token_usage=TokenUsage(
                     input_tokens=int(usage.get("inputTokens", 0)),
                     output_tokens=int(usage.get("outputTokens", 0)),
@@ -370,6 +399,17 @@ class BedrockPreferenceParser:
         if explicit is None or is_vague_origin(explicit):
             return extraction.model_copy(update={"start_label": DEFAULT_ORIGIN_LABEL})
         return extraction.model_copy(update={"start_label": explicit})
+
+    @staticmethod
+    def _reconcile_lunch_deadline(
+        prompt: str, extraction: ConstraintExtraction
+    ) -> ConstraintExtraction:
+        lunch_latest = DeterministicPreferenceParser._lunch_time(
+            prompt,
+            start_time=extraction.start_time,
+            finish_by=extraction.finish_by,
+        )
+        return extraction.model_copy(update={"lunch_latest": lunch_latest})
 
     def _reconcile_venue_preferences(
         self, prompt: str, extraction: ConstraintExtraction

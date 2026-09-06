@@ -94,6 +94,27 @@ def test_deterministic_parser_uses_conservative_defaults() -> None:
     assert outcome.warnings
 
 
+def test_afternoon_start_gets_a_disclosed_feasible_lunch_default() -> None:
+    outcome = DeterministicPreferenceParser(VenueCatalog()).parse(
+        "Plan 1 pm-5 pm starting from City Hall MRT.",
+        journey_date=date(2026, 9, 2),
+    )
+
+    assert outcome.request.start_time == time(13)
+    assert outcome.request.hard.lunch_latest == time(14)
+    assert any("defaulted to 14:00" in warning for warning in outcome.warnings)
+
+
+def test_explicit_lunch_deadline_is_never_relaxed_for_afternoon_start() -> None:
+    outcome = DeterministicPreferenceParser(VenueCatalog()).parse(
+        "Plan 1 pm-5 pm starting from City Hall MRT, lunch by 1 pm.",
+        journey_date=date(2026, 9, 2),
+    )
+
+    assert outcome.request.hard.lunch_latest == time(13)
+    assert all("defaulted" not in warning for warning in outcome.warnings)
+
+
 @pytest.mark.parametrize(
     ("prompt", "expected"),
     (
@@ -239,6 +260,41 @@ def test_bedrock_parser_accepts_forced_tool_use_output() -> None:
     assert outcome.request.start_label == "Bedok MRT"
     assert outcome.request.hard.total_budget_sgd == 45
     assert [category.value for category in outcome.request.soft.preferred_categories] == ["garden"]
+
+
+def test_bedrock_cannot_invent_an_infeasible_default_lunch_deadline() -> None:
+    client = FakeBedrockClient(
+        {
+            "output": {
+                "message": {
+                    "content": [
+                        {
+                            "toolUse": {
+                                "input": {
+                                    "start_time": "13:00",
+                                    "finish_by": "17:00",
+                                    "lunch_latest": "13:00",
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    )
+    parser = BedrockPreferenceParser(
+        settings=Settings(adaptsg_mode="live", adaptsg_bedrock_enabled=True),
+        catalog=VenueCatalog(),
+        client=client,
+    )
+
+    outcome = parser.parse(
+        "Plan 1 pm-5 pm starting from City Hall MRT.",
+        journey_date=date(2026, 9, 8),
+    )
+
+    assert outcome.request.hard.lunch_latest == time(14)
+    assert any("defaulted to 14:00" in warning for warning in outcome.warnings)
 
 
 def test_bedrock_cannot_promote_ordinary_visit_wording_to_required() -> None:
