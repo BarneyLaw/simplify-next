@@ -77,6 +77,7 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | AWS authenticated v2 deployment | Passed | `adaptsg-demo` reached `UPDATE_COMPLETE`; main run `33972607910` passed token-free smoke and public/protected route checks |
 | AWS static web deployment | Passed | `adaptsg-demo` reached `UPDATE_COMPLETE`; main run `33976769643` passed CloudFront page/runtime-config/same-origin API smoke; Cognito callback and logout URLs target CloudFront; Bedrock output is `DISABLED` |
 | AWS deployment posture | 22/22 passed | Live read-only verification in `ap-southeast-1`; private/versioned/encrypted S3, signed CloudFront origin, HTTPS and uncached API path, API metrics/logs/throttles, encrypted DynamoDB TTL, public Cognito PKCE client, and Bedrock disabled |
+| AWS alarm-notification bootstrap | Passed | `adaptsg-cicd-bootstrap` reached `UPDATE_COMPLETE`; the execution role can manage only `adaptsg-demo-operations-alarms`, and the GitHub deploy role has read-only attributes access to that topic |
 | Current Python 3.12 CI gate | Passed | Branch run `34012492178` passed correctness, the 90% coverage threshold, dependency audit, Docker build and SAM validate/build; deployment was correctly skipped outside `main` |
 | Latest merged AWS/browser deployment | Passed | Main run `34013996057` passed correctness, Docker, SAM, token-free deployment, static publishing and post-deploy verification at commit `193c7eb` |
 | Windows-local Python 3.12 gate | Platform discrepancy | 172 tests passed with 90.77% branch coverage on `feature/r4-cost-alerting`; the portable Python distribution lacks the standard-library `venv.EnvBuilder`, so local `pip-audit` cannot start, while the Linux main gate passes dependency audit |
@@ -127,7 +128,7 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-aws-web-hosting` | CloudFront/private-S3 static hosting, same-origin API, Cognito self-signup, PKCE runtime contract and CI publishing | Merged in PR #25 and deployed; main run `33976769643` passed all checks and AWS smoke tests |
 | `feature/r4-deployment-posture` | Read-only live verification for token-free AWS security and service wiring | Merged; bootstrap update `UPDATE_COMPLETE`, live stack passed 22/22 checks, and branch run `34012492178` passed correctness, Docker and SAM |
 | `feature/static-browser-cognito` | Restored `public/index.html` and its serving path, added the Cognito PKCE auth layer plus `scripts/test_web_auth.mjs`, retired Streamlit | Merged in PR #29; main run `34013996057` deployed the static client successfully; independent browser-session QA remains pending |
-| `feature/r4-cost-alerting` | Scoped SNS delivery for Lambda error/throttle alarms plus post-deploy policy verification | 172 tests and 90.77% coverage passed locally; SAM and CloudFormation lint passed; bootstrap/application deployment pending |
+| `feature/r4-cost-alerting` | Scoped SNS delivery for Lambda error/throttle alarms plus post-deploy policy verification | Branch run `34015239875` passed correctness, Docker and SAM; bootstrap is `UPDATE_COMPLETE` with scoped SNS permissions; application deployment awaits merge |
 
 ## External setup still required
 
