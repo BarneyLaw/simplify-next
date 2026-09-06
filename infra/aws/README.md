@@ -201,6 +201,22 @@ aws apigatewayv2 get-apis --profile workshop
 aws cognito-idp list-user-pools --max-results 10 --profile workshop
 ```
 
+Run the read-only deployment posture verifier after a deployment or before the demo:
+
+```powershell
+python infra/aws/verify_deployment.py `
+  --profile workshop `
+  --region ap-southeast-1 `
+  --stack-name adaptsg-demo
+```
+
+It verifies that Bedrock is disabled; both application buckets are private, encrypted, and
+versioned; CloudFront uses signed S3 access and HTTPS; `/api/*` is uncached; the API stage is
+logged and throttled; DynamoDB is encrypted with TTL; and Cognito remains a public OAuth/PKCE
+client without a client secret. It reads configuration only and does not enumerate users,
+application records, secret values, or Lambda environment variables. The same check runs after
+each successful deployment from `main`.
+
 Open the `WebAppUrl` output to view the AWS-hosted page. The private web bucket is not a website
 endpoint and is deliberately inaccessible directly; CloudFront is the only public entry point.
 

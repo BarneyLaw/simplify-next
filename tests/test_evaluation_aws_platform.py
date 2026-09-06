@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from adaptsg import aws_handler
+from infra.aws.verify_deployment import AwsReader, verify_deployment
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -195,3 +196,234 @@ def test_static_web_placeholder_is_infrastructure_only_and_runtime_config_driven
     assert "ready to be published by the UI team" in placeholder
     assert 'href="/api/health"' in placeholder
     assert "runtime-config.json" not in placeholder
+
+
+class _FakeAwsReader(AwsReader):
+    def __init__(self, responses: dict[tuple[str, ...], dict[str, Any]]) -> None:
+        self.responses = responses
+
+    def read(self, service: str, operation: str, *arguments: str) -> dict[str, Any]:
+        return self.responses[(service, operation, *arguments)]
+
+
+def _deployed_posture_responses() -> dict[tuple[str, ...], dict[str, Any]]:
+    stack_name = "adaptsg-demo"
+    region = "ap-southeast-1"
+    account = "138851097788"
+    web_bucket = f"{account}-{region}-{stack_name}-web"
+    evidence_bucket = f"{account}-{region}-{stack_name}-evidence"
+    web_domain = "dexample.cloudfront.net"
+    web_url = f"https://{web_domain}"
+    api_id = "api123"
+    user_pool_id = f"{region}_pool"
+    client_id = "public-client"
+    responses: dict[tuple[str, ...], dict[str, Any]] = {
+        (
+            "cloudformation",
+            "describe-stacks",
+            "--stack-name",
+            stack_name,
+        ): {
+            "Stacks": [
+                {
+                    "StackStatus": "UPDATE_COMPLETE",
+                    "Parameters": [
+                        {"ParameterKey": "ApplicationMode", "ParameterValue": "demo"},
+                        {"ParameterKey": "BedrockModelArns", "ParameterValue": "DISABLED"},
+                    ],
+                    "Outputs": [
+                        {"OutputKey": "BedrockStatus", "OutputValue": "DISABLED"},
+                        {"OutputKey": "WebBucketName", "OutputValue": web_bucket},
+                        {"OutputKey": "EvidenceBucketName", "OutputValue": evidence_bucket},
+                        {"OutputKey": "WebAppUrl", "OutputValue": web_url},
+                        {"OutputKey": "WebDistributionId", "OutputValue": "DIST123"},
+                        {
+                            "OutputKey": "AdaptSgHttpApiUrl",
+                            "OutputValue": f"https://{api_id}.execute-api.{region}.amazonaws.com",
+                        },
+                        {"OutputKey": "JourneyTableName", "OutputValue": f"{stack_name}-state-v2"},
+                        {"OutputKey": "CognitoUserPoolId", "OutputValue": user_pool_id},
+                        {"OutputKey": "CognitoClientId", "OutputValue": client_id},
+                    ],
+                }
+            ]
+        },
+        ("cloudfront", "get-distribution", "--id", "DIST123"): {
+            "Distribution": {
+                "Status": "Deployed",
+                "DomainName": web_domain,
+                "DistributionConfig": {
+                    "Enabled": True,
+                    "Origins": {
+                        "Items": [
+                            {
+                                "Id": "WebBucketOrigin",
+                                "DomainName": f"{web_bucket}.s3.{region}.amazonaws.com",
+                                "OriginAccessControlId": "OAC123",
+                            },
+                            {
+                                "Id": "ApiGatewayOrigin",
+                                "DomainName": f"{api_id}.execute-api.{region}.amazonaws.com",
+                            },
+                        ]
+                    },
+                    "DefaultCacheBehavior": {"ViewerProtocolPolicy": "redirect-to-https"},
+                    "CacheBehaviors": {
+                        "Items": [
+                            {
+                                "PathPattern": "/api/*",
+                                "TargetOriginId": "ApiGatewayOrigin",
+                                "ViewerProtocolPolicy": "redirect-to-https",
+                                "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+                            }
+                        ]
+                    },
+                },
+            }
+        },
+        (
+            "apigatewayv2",
+            "get-stage",
+            "--api-id",
+            api_id,
+            "--stage-name",
+            "$default",
+        ): {
+            "AutoDeploy": True,
+            "DefaultRouteSettings": {
+                "DetailedMetricsEnabled": True,
+                "ThrottlingBurstLimit": 20,
+                "ThrottlingRateLimit": 10.0,
+            },
+            "AccessLogSettings": {
+                "DestinationArn": "arn:aws:logs:ap-southeast-1:123:log-group:api",
+                "Format": "safe-json-format",
+            },
+        },
+        ("dynamodb", "describe-table", "--table-name", f"{stack_name}-state-v2"): {
+            "Table": {
+                "TableStatus": "ACTIVE",
+                "BillingModeSummary": {"BillingMode": "PAY_PER_REQUEST"},
+                "SSEDescription": {"Status": "ENABLED"},
+            }
+        },
+        (
+            "dynamodb",
+            "describe-time-to-live",
+            "--table-name",
+            f"{stack_name}-state-v2",
+        ): {
+            "TimeToLiveDescription": {
+                "TimeToLiveStatus": "ENABLED",
+                "AttributeName": "expires_at",
+            }
+        },
+        ("cognito-idp", "describe-user-pool", "--user-pool-id", user_pool_id): {
+            "UserPool": {
+                "UsernameAttributes": ["email"],
+                "AdminCreateUserConfig": {"AllowAdminCreateUserOnly": False},
+            }
+        },
+        (
+            "cognito-idp",
+            "describe-user-pool-client",
+            "--user-pool-id",
+            user_pool_id,
+            "--client-id",
+            client_id,
+        ): {
+            "UserPoolClient": {
+                "AllowedOAuthFlows": ["code"],
+                "AllowedOAuthScopes": [
+                    "openid",
+                    "email",
+                    "adaptsg/journeys.read",
+                    "adaptsg/journeys.write",
+                    "adaptsg/consents.manage",
+                    "adaptsg/audit.read",
+                ],
+                "CallbackURLs": [f"{web_url}/"],
+                "LogoutURLs": [f"{web_url}/"],
+            }
+        },
+    }
+    for bucket in (web_bucket, evidence_bucket):
+        responses[("s3api", "get-public-access-block", "--bucket", bucket)] = {
+            "PublicAccessBlockConfiguration": {
+                "BlockPublicAcls": True,
+                "BlockPublicPolicy": True,
+                "IgnorePublicAcls": True,
+                "RestrictPublicBuckets": True,
+            }
+        }
+        responses[("s3api", "get-bucket-policy-status", "--bucket", bucket)] = {
+            "PolicyStatus": {"IsPublic": False}
+        }
+        responses[("s3api", "get-bucket-encryption", "--bucket", bucket)] = {
+            "ServerSideEncryptionConfiguration": {
+                "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]
+            }
+        }
+        responses[("s3api", "get-bucket-versioning", "--bucket", bucket)] = {"Status": "Enabled"}
+    return responses
+
+
+def test_deployment_posture_verifier_accepts_private_token_free_stack() -> None:
+    checks = verify_deployment(
+        _FakeAwsReader(_deployed_posture_responses()),
+        stack_name="adaptsg-demo",
+        region="ap-southeast-1",
+    )
+
+    assert len(checks) == 22
+    assert all(check.passed for check in checks)
+    assert any(check.name == "Bedrock stack output is disabled" for check in checks)
+    assert any(
+        check.name == "CloudFront uses signed access to the private web bucket" for check in checks
+    )
+
+
+def test_deployment_posture_verifier_reports_public_bucket_and_bedrock_drift() -> None:
+    responses = _deployed_posture_responses()
+    stack = responses[("cloudformation", "describe-stacks", "--stack-name", "adaptsg-demo")][
+        "Stacks"
+    ][0]
+    stack["Outputs"][0]["OutputValue"] = "CONNECTED"
+    web_bucket = "138851097788-ap-southeast-1-adaptsg-demo-web"
+    responses[("s3api", "get-bucket-policy-status", "--bucket", web_bucket)]["PolicyStatus"][
+        "IsPublic"
+    ] = True
+
+    checks = verify_deployment(
+        _FakeAwsReader(responses),
+        stack_name="adaptsg-demo",
+        region="ap-southeast-1",
+    )
+    failed_names = {check.name for check in checks if not check.passed}
+
+    assert failed_names == {
+        "Bedrock stack output is disabled",
+        "web asset bucket bucket policy is private",
+    }
+
+
+def test_aws_pipeline_runs_read_only_deployment_posture_verification() -> None:
+    workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    bootstrap = (REPOSITORY_ROOT / "infra" / "aws" / "bootstrap.yaml").read_text(encoding="utf-8")
+    deploy_role = bootstrap.split("GitHubDeployRole:", 1)[1].split("Outputs:", 1)[0]
+
+    assert "Verify deployed AWS security and service posture" in workflow
+    assert "python infra/aws/verify_deployment.py" in workflow
+    for read_action in (
+        "s3:GetBucketPolicyStatus",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketVersioning",
+        "s3:GetEncryptionConfiguration",
+        "cloudfront:GetDistribution",
+        "apigateway:GET",
+        "dynamodb:DescribeTable",
+        "dynamodb:DescribeTimeToLive",
+        "cognito-idp:DescribeUserPool",
+        "cognito-idp:DescribeUserPoolClient",
+    ):
+        assert read_action in deploy_role
