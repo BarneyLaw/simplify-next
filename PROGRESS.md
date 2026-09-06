@@ -4,19 +4,17 @@ Last updated: 2026-09-06 (Asia/Singapore)
 
 ## Current status
 
-The first Cognito-aware `main` deployment correctly rejected the legacy direct-Lambda journey
-smoke with `401`: direct invocation bypassed API Gateway and therefore supplied no verified JWT
-claims. `feature/r4-authenticated-lambda-smoke` now emulates API Gateway's post-authorizer claim
-shape only for the internal Lambda/DynamoDB smoke while retaining the separate real API Gateway
-unsigned-request `401` assertion.
+The corrected Cognito-aware `main` deployment now passes. Its internal Lambda/DynamoDB smoke
+emulates API Gateway's post-authorizer claim shape, while a separate real API Gateway assertion
+still verifies that an unsigned protected request receives `401`.
 
-Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. Bedrock remains disabled. The Role 1 identity/provider separation and Role 3 AWS browser metadata changes are merged on `main`; the application stack update completed, but post-deploy acceptance is pending the corrected Lambda smoke.
+Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. Bedrock remains disabled. The Role 1 identity/provider separation, Role 3 AWS browser metadata and corrected deployment smoke are merged, deployed and passing. Manual two-browser owner-isolation acceptance remains.
 
 The deployed demo passed all 22 read-only AWS posture checks on 2026-09-06. The bootstrap stack
 is updated so CI can repeat those checks after each deployment without access to application
 records, Cognito users, provider secrets, or Lambda environment values. Authenticated multi-user
-ownership remains blocked in the deployed revision until the Role 1 independent-mode correction is
-merged and deployed.
+ownership is implemented in the deployed revision; independent browser-session verification is
+still required before making the final multi-user acceptance claim.
 
 ## Completed milestones
 
@@ -87,6 +85,7 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | Current Python 3.12 CI gate | Passed | Branch run `34012492178` passed correctness, the 90% coverage threshold, dependency audit, Docker build and SAM validate/build; deployment was correctly skipped outside `main` |
 | Latest merged AWS/browser deployment | Passed | Main run `34013996057` passed correctness, Docker, SAM, token-free deployment, static publishing and post-deploy verification at commit `193c7eb` |
 | Windows-local Python 3.12 gate | Platform discrepancy | 172 tests passed with 90.77% branch coverage on `feature/r4-cost-alerting`; the portable Python distribution lacks the standard-library `venv.EnvBuilder`, so local `pip-audit` cannot start, while the Linux main gate passes dependency audit |
+| Durable trust/location branch | 188 tests passed | Python 3.12.10, 90.43% branch coverage; Ruff, strict mypy, Bandit, CloudFormation lint and browser checks passed locally; `pip-audit` retains the documented portable-Windows startup issue |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
 | LAN DNS/TLS/health | Passed | `sim-next.lab.packetcraft.dev` -> `192.168.1.250`; trusted HTTPS 200 |
@@ -101,14 +100,16 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 - [x] Replaced the public AWS Function URL template with an authenticated HTTP API/Cognito/DynamoDB shape.
 - [x] Bound API Gateway-verified Cognito subjects to server-owned journeys.
 - [x] Added the single-caregiver ADR and point-in-time recovery runbook.
-- [ ] Complete transactional DynamoDB persistence for consent, intents and per-resource audit chains.
+- [x] Implement transactional DynamoDB persistence for consent, authority grants, intents and
+      per-resource audit chains on `feature/r1-durable-trust-records`; merge/deploy is pending.
 - [x] Complete the Role 3 static Cognito/PKCE browser client.
 - [ ] Complete live allowlist verification.
-- [ ] Run Python 3.12 full gate, SAM validate/build, staging AWS integration and restore drill.
+- [ ] Merge/deploy the durable trust-record branch, run its CI/SAM gates and complete a restore drill.
 - [x] Add local CloudFormation schema lint plus rollback-safe table protection controls.
 - [x] Add explicit OAuth-scoped API routes, privacy-safe API access logs and edge throttling on the Role 4 recovery branch.
 - [x] Add a read-only post-deploy verifier and apply its scoped GitHub role permissions; live demo passed 22/22 checks.
-- [ ] Complete the remaining production-readiness handoffs in `docs/contracts/production-readiness-handoffs.md`.
+- [x] Complete the remaining code handoffs in `docs/contracts/production-readiness-handoffs.md`;
+      merge/deploy and manual operational acceptance remain.
 
 ## Current feature branches and merges
 
@@ -134,8 +135,10 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-aws-web-hosting` | CloudFront/private-S3 static hosting, same-origin API, Cognito self-signup, PKCE runtime contract and CI publishing | Merged in PR #25 and deployed; main run `33976769643` passed all checks and AWS smoke tests |
 | `feature/r4-deployment-posture` | Read-only live verification for token-free AWS security and service wiring | Merged; bootstrap update `UPDATE_COMPLETE`, live stack passed 22/22 checks, and branch run `34012492178` passed correctness, Docker and SAM |
 | `feature/static-browser-cognito` | Restored `public/index.html` and its serving path, added the Cognito PKCE auth layer plus `scripts/test_web_auth.mjs`, retired Streamlit | Merged in PR #29; main run `34013996057` deployed the static client successfully; independent browser-session QA remains pending |
-| `feature/r4-cost-alerting` | Scoped SNS delivery for Lambda error/throttle alarms plus post-deploy policy verification | Branch run `34015239875` passed correctness, Docker and SAM; bootstrap is `UPDATE_COMPLETE` with scoped SNS permissions; application deployment awaits merge |
-| `feature/r3-functional-aws-demo` | Remove stale Vercel browser metadata and reverify the complete static journey/auth flow | In progress; Role 3 client was already functionally complete on main |
+| `feature/r4-cost-alerting` | Scoped SNS delivery for Lambda error/throttle alarms plus post-deploy policy verification | Merged in PR #30 |
+| `feature/r3-functional-aws-demo` | Remove stale Vercel browser metadata and reverify the complete static journey/auth flow | Merged in PR #32 |
+| `feature/r4-authenticated-lambda-smoke` | Cognito-aware direct-Lambda smoke plus real unsigned API rejection assertion | Merged in PR #35; deployment passes |
+| `feature/r1-durable-trust-records` | Durable consent/grants/intents, atomic per-journey audit and strict location ambiguity handling | Local gates pass except the documented Windows portable-Python `pip-audit` startup issue; awaiting CI and review |
 
 ## External setup still required
 
@@ -147,15 +150,13 @@ The repository keeps each feature boundary visible and uses incremental commits.
 6. Obtain the required review for AdaptSG PR #9; all CI checks are passing.
 7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
 8. Inspect the LAN deployment in two independent browser contexts when a browser is connected.
-9. Merge and deploy `feature/r1-auth-provider-separation`, then verify the API derives identity
-   from the verified Cognito `sub` instead of the fixed `demo-caregiver` principal.
-10. Exercise Cognito signup, email verification, login, protected API access, and logout in two browsers,
+9. Exercise Cognito signup, email verification, login, protected API access, and logout in two browsers,
     and confirm one authenticated principal cannot read another's journey.
-11. Check current account spending and the hackathon threshold in the Billing console; the workshop
+10. Check current account spending and the hackathon threshold in the Billing console; the workshop
     organization explicitly denies Cost Explorer API access, and the application stack does not request
     account-level billing-management permissions.
-12. If operational email alerts are desired, set `ADAPTSG_ALARM_NOTIFICATION_EMAIL` and confirm the
-    SNS subscription after the Role 4 cost-alerting branch is merged and deployed.
+11. If operational email alerts are desired, set `ADAPTSG_ALARM_NOTIFICATION_EMAIL` and confirm the
+    SNS subscription.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
 
