@@ -45,24 +45,44 @@ class JourneyPlanner:
 
     def create(self, request: JourneyRequest, *, parser_source: str = "deterministic") -> Itinerary:
         venues = self._select_initial_venues(request)
-        purposes = self._purposes_for(venues)
+        venue_sets = [venues]
+        activity_count = sum(venue.category is not VenueCategory.FOOD for venue in venues)
+        adaptive_selection = self._has_activity_preferences(request)
+        if adaptive_selection and activity_count > 1:
+            for index, venue in enumerate(venues):
+                if (
+                    venue.category is not VenueCategory.FOOD
+                    and venue.id not in request.hard.required_venue_ids
+                ):
+                    venue_sets.append(venues[:index] + venues[index + 1 :])
         candidates = (
-            self._schedule(
-                request=request,
-                venues=venues,
-                purposes=purposes,
-                parser_source=parser_source,
-                modes=modes,
+            (
+                set_rank,
+                order_rank,
+                self._schedule(
+                    request=request,
+                    venues=ordered_venues,
+                    purposes=self._purposes_for(ordered_venues),
+                    parser_source=parser_source,
+                    modes=modes,
+                ),
+            )
+            for set_rank, venue_set in enumerate(venue_sets)
+            for order_rank, ordered_venues in enumerate(
+                self._venue_orders(venue_set) if adaptive_selection else (venue_set,)
             )
             for modes in product(
                 (TravelMode.PUBLIC_TRANSPORT, TravelMode.TAXI),
-                repeat=len(venues),
+                repeat=len(ordered_venues),
             )
         )
         feasible = [
-            itinerary for itinerary in candidates if self.validator.validate(itinerary).valid
+            (set_rank, order_rank, itinerary)
+            for set_rank, order_rank, itinerary in candidates
+            if self.validator.validate(itinerary).valid
         ]
         if not feasible:
+            purposes = self._purposes_for(venues)
             itinerary = self._schedule(
                 request=request,
                 venues=venues,
@@ -75,49 +95,137 @@ class JourneyPlanner:
             raise NoFeasibleItinerary(f"no safe initial itinerary: {messages}")
         return min(
             feasible,
-            key=lambda itinerary: (
-                sum(segment.route.mode is TravelMode.TAXI for segment in itinerary.segments),
-                itinerary.total_cost_sgd,
+            key=lambda candidate: (
+                candidate[0],
+                sum(segment.route.mode is TravelMode.TAXI for segment in candidate[2].segments),
+                candidate[1],
+                candidate[2].total_cost_sgd,
             ),
+        )[2]
+
+    @staticmethod
+    def _venue_orders(venues: tuple[Venue, ...]) -> tuple[tuple[Venue, ...], ...]:
+        lunch_index = next(
+            index for index, venue in enumerate(venues) if venue.category is VenueCategory.FOOD
+        )
+        if lunch_index == 0:
+            return (venues,)
+        lunch_first = (
+            venues[lunch_index],
+            *venues[:lunch_index],
+            *venues[lunch_index + 1 :],
+        )
+        return venues, lunch_first
+
+    @staticmethod
+    def _has_activity_preferences(request: JourneyRequest) -> bool:
+        return bool(
+            request.hard.required_venue_ids
+            or request.soft.preferred_venue_ids
+            or any(
+                category is not VenueCategory.FOOD for category in request.soft.preferred_categories
+            )
         )
 
     def _select_initial_venues(self, request: JourneyRequest) -> tuple[Venue, ...]:
+        if request.max_stops < 2:
+            raise NoFeasibleItinerary("at least two stops are required to include lunch")
+
         required = [
             self.catalog.get(venue_id) for venue_id in sorted(request.hard.required_venue_ids)
         ]
+        eligible_ids = {
+            venue.id
+            for venue in self.catalog.eligible(
+                wheelchair_required=request.hard.wheelchair_accessible_required
+            )
+        }
+        inaccessible_required = {venue.id for venue in required} - eligible_ids
+        if inaccessible_required:
+            raise NoFeasibleItinerary("a required venue lacks verified accessibility data")
+
         non_food_required = [
             venue for venue in required if venue.category is not VenueCategory.FOOD
         ]
         if len(non_food_required) > request.max_stops - 1:
             raise NoFeasibleItinerary("required venues leave no room for the mandatory lunch stop")
+        required_food = [venue for venue in required if venue.category is VenueCategory.FOOD]
+        if len(required_food) > 1:
+            raise NoFeasibleItinerary(
+                "multiple required food venues cannot fit the single mandatory lunch stop"
+            )
 
         preferred = [
             self.catalog.get(venue_id)
             for venue_id in sorted(request.soft.preferred_venue_ids)
-            if venue_id not in request.hard.required_venue_ids
+            if venue_id not in request.hard.required_venue_ids and venue_id in eligible_ids
         ]
         activities: list[Venue] = list(non_food_required)
         for venue in preferred:
             if venue.category is not VenueCategory.FOOD and len(activities) < request.max_stops - 1:
                 activities.append(venue)
-        defaults = (self.catalog.get("national-gallery"), self.catalog.get("gardens-bay-outdoor"))
-        for venue in defaults:
+
+        requested_categories = tuple(
+            category
+            for category in request.soft.preferred_categories
+            if category is not VenueCategory.FOOD
+            and category not in {venue.category for venue in activities}
+        )
+        category_order = tuple(
+            dict.fromkeys(
+                (
+                    *((VenueCategory.REST,) if VenueCategory.REST in requested_categories else ()),
+                    *requested_categories,
+                )
+            )
+        )
+        used_ids = {venue.id for venue in activities}
+        for category in category_order:
             if len(activities) >= request.max_stops - 1:
                 break
-            if venue.id not in {item.id for item in activities}:
-                activities.append(venue)
-        priority = {venue.id: index for index, venue in enumerate(defaults)}
-        activities.sort(key=lambda venue: (priority.get(venue.id, len(priority)), venue.id))
+            candidate = next(
+                (
+                    venue
+                    for venue in self.catalog.eligible(
+                        wheelchair_required=request.hard.wheelchair_accessible_required,
+                        excluded_ids=frozenset(used_ids),
+                        categories=(category,),
+                    )
+                    if venue.id not in used_ids
+                ),
+                None,
+            )
+            if candidate is not None:
+                activities.append(candidate)
+                used_ids.add(candidate.id)
 
         lunch = next(
-            (venue for venue in required if venue.category is VenueCategory.FOOD),
-            self.catalog.get("funan-food-court"),
+            iter(required_food),
+            next(
+                (venue for venue in preferred if venue.category is VenueCategory.FOOD),
+                self.catalog.get("funan-food-court"),
+            ),
         )
-        if request.hard.wheelchair_accessible_required:
-            eligible_ids = {venue.id for venue in self.catalog.eligible(wheelchair_required=True)}
-            selected_ids = {venue.id for venue in (*activities, lunch)}
-            if not selected_ids <= eligible_ids:
-                raise NoFeasibleItinerary("a required venue lacks verified accessibility data")
+        if lunch.id not in eligible_ids:
+            raise NoFeasibleItinerary("the selected lunch venue lacks verified accessibility data")
+
+        if not activities:
+            defaults = (
+                self.catalog.get("national-gallery"),
+                self.catalog.get("gardens-bay-outdoor"),
+            )
+            preference_supplied = bool(
+                request.hard.required_venue_ids
+                or request.soft.preferred_venue_ids
+                or any(
+                    category is not VenueCategory.FOOD
+                    for category in request.soft.preferred_categories
+                )
+            )
+            fallback_limit = 1 if preference_supplied else request.max_stops - 1
+            for venue in defaults:
+                if venue.id in eligible_ids and len(activities) < fallback_limit:
+                    activities.append(venue)
 
         ordered = [activities[0], lunch]
         ordered.extend(activities[1:])

@@ -9,6 +9,7 @@ from adaptsg.domain import (
     ReplanTrigger,
     TravelMode,
     TriggerType,
+    VenueCategory,
 )
 from adaptsg.errors import ApprovalRequired, NoFeasibleItinerary, ReplanLimitReached
 from adaptsg.planning import JourneyPlanner, JourneyReplanner
@@ -66,9 +67,168 @@ def test_soft_venue_is_kept_initially_but_replaceable(
         ReplanTrigger(type=TriggerType.HEAVY_RAIN, message="Heavy rain"),
     )
     assert proposal.validation.valid
-    assert proposal.itinerary.segments[2].venue.indoor
-    assert proposal.itinerary.segments[:2] == plan.segments[:2]
+    assert all(
+        segment.venue.indoor
+        for segment in proposal.itinerary.segments
+        if segment.venue.category is not VenueCategory.FOOD
+    )
+    original_lunch = next(
+        segment for segment in plan.segments if segment.venue.category is VenueCategory.FOOD
+    )
+    replacement_lunch = next(
+        segment
+        for segment in proposal.itinerary.segments
+        if segment.venue.category is VenueCategory.FOOD
+    )
+    assert replacement_lunch.venue.id == original_lunch.venue.id
     assert proposal.requires_approval
+
+
+def test_category_preferences_replace_training_defaults(
+    planner: JourneyPlanner, journey_request: JourneyRequest
+) -> None:
+    soft = journey_request.soft.model_copy(
+        update={
+            "preferred_categories": (
+                VenueCategory.GARDEN,
+                VenueCategory.OUTDOOR_ATTRACTION,
+            )
+        }
+    )
+
+    selected = planner._select_initial_venues(journey_request.model_copy(update={"soft": soft}))
+
+    assert [venue.category for venue in selected] == [
+        VenueCategory.GARDEN,
+        VenueCategory.FOOD,
+        VenueCategory.OUTDOOR_ATTRACTION,
+    ]
+    assert all(venue.id != "national-gallery" for venue in selected)
+
+
+def test_single_category_adds_one_relevant_activity_without_padding(
+    planner: JourneyPlanner, journey_request: JourneyRequest
+) -> None:
+    soft = journey_request.soft.model_copy(update={"preferred_categories": (VenueCategory.GARDEN,)})
+
+    selected = planner._select_initial_venues(journey_request.model_copy(update={"soft": soft}))
+
+    assert [venue.category for venue in selected] == [
+        VenueCategory.GARDEN,
+        VenueCategory.FOOD,
+    ]
+
+
+def test_lunch_is_scheduled_first_when_activity_first_is_infeasible(
+    planner: JourneyPlanner, journey_request: JourneyRequest
+) -> None:
+    soft = journey_request.soft.model_copy(update={"preferred_categories": (VenueCategory.REST,)})
+    request = journey_request.model_copy(update={"start_time": time(12), "soft": soft})
+
+    plan = planner.create(request)
+
+    assert plan.segments[0].venue.category is VenueCategory.FOOD
+    assert plan.segments[0].activity_start.time() <= request.hard.lunch_latest
+
+
+def test_soft_activity_can_be_dropped_to_satisfy_hard_budget(
+    planner: JourneyPlanner, journey_request: JourneyRequest
+) -> None:
+    hard = journey_request.hard.model_copy(update={"total_budget_sgd": 30})
+    soft = journey_request.soft.model_copy(
+        update={
+            "preferred_categories": (
+                VenueCategory.INDOOR_MUSEUM,
+                VenueCategory.REST,
+            )
+        }
+    )
+    request = journey_request.model_copy(update={"hard": hard, "soft": soft})
+
+    plan = planner.create(request)
+
+    assert planner.validator.validate(plan).valid
+    assert plan.total_cost_sgd <= 30
+    assert any(segment.venue.category in soft.preferred_categories for segment in plan.segments)
+
+
+def test_rest_is_prioritised_when_activity_slots_are_limited(
+    planner: JourneyPlanner, journey_request: JourneyRequest
+) -> None:
+    soft = journey_request.soft.model_copy(
+        update={
+            "preferred_categories": (
+                VenueCategory.INDOOR_MUSEUM,
+                VenueCategory.INDOOR_ATTRACTION,
+                VenueCategory.REST,
+            )
+        }
+    )
+
+    selected = planner._select_initial_venues(journey_request.model_copy(update={"soft": soft}))
+
+    assert selected[0].id == "library-orchard"
+    assert selected[2].category is VenueCategory.INDOOR_MUSEUM
+
+
+def test_exact_preference_is_not_padded_with_same_category_defaults(
+    planner: JourneyPlanner, journey_request: JourneyRequest
+) -> None:
+    soft = journey_request.soft.model_copy(
+        update={
+            "preferred_venue_ids": frozenset({"asian-civilisations-museum"}),
+            "preferred_categories": (VenueCategory.INDOOR_MUSEUM,),
+        }
+    )
+
+    selected = planner._select_initial_venues(journey_request.model_copy(update={"soft": soft}))
+
+    assert [venue.id for venue in selected] == [
+        "asian-civilisations-museum",
+        "funan-food-court",
+    ]
+
+
+def test_preferred_food_venue_is_used_for_lunch(
+    planner: JourneyPlanner, journey_request: JourneyRequest
+) -> None:
+    soft = journey_request.soft.model_copy(
+        update={"preferred_venue_ids": frozenset({"toa-payoh-food-hub"})}
+    )
+
+    selected = planner._select_initial_venues(journey_request.model_copy(update={"soft": soft}))
+
+    assert selected[1].id == "toa-payoh-food-hub"
+
+
+def test_unverified_soft_preference_is_excluded_when_access_is_required(
+    planner: JourneyPlanner, journey_request: JourneyRequest
+) -> None:
+    soft = journey_request.soft.model_copy(
+        update={"preferred_venue_ids": frozenset({"fort-canning-park"})}
+    )
+
+    selected = planner._select_initial_venues(journey_request.model_copy(update={"soft": soft}))
+
+    assert all(venue.id != "fort-canning-park" for venue in selected)
+
+
+def test_one_stop_limit_is_rejected_because_lunch_is_mandatory(
+    planner: JourneyPlanner, journey_request: JourneyRequest
+) -> None:
+    with pytest.raises(NoFeasibleItinerary, match="at least two stops"):
+        planner._select_initial_venues(journey_request.model_copy(update={"max_stops": 1}))
+
+
+def test_multiple_required_lunch_venues_are_rejected(
+    planner: JourneyPlanner, journey_request: JourneyRequest
+) -> None:
+    hard = journey_request.hard.model_copy(
+        update={"required_venue_ids": frozenset({"funan-food-court", "toa-payoh-food-hub"})}
+    )
+
+    with pytest.raises(NoFeasibleItinerary, match="multiple required food venues"):
+        planner._select_initial_venues(journey_request.model_copy(update={"hard": hard}))
 
 
 def test_fatigue_adds_one_taxi_and_requires_cost_approval(
