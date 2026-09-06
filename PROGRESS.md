@@ -14,10 +14,13 @@ through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cogn
 HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and
 alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with
 private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth
-configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. The stack now
-runs in `live` mode with OneMap/LTA/data.gov.sg credentials supplied by Secrets Manager and exact-resource
-Bedrock access to the regional Claude 3 Haiku model, capped at 256 output tokens. Manual two-browser
-owner-isolation and a complete authenticated browser rehearsal remain acceptance work.
+configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. The signed-out
+page is responsive and the authenticated flow now requires explicit server-owned planning consent before
+journey navigation is enabled. The stack runs in `live` mode with OneMap/LTA/data.gov.sg credentials
+supplied by Secrets Manager and exact-resource Bedrock access to the regional Claude 3 Haiku model,
+capped at 256 output tokens. Claude invocation remains on the deterministic fallback until the account
+owner accepts its one-time AWS Marketplace agreement. Manual two-browser owner-isolation and a complete
+authenticated browser rehearsal remain acceptance work.
 
 The deployed demo passed all 23 read-only AWS posture checks on 2026-09-06. The bootstrap stack
 is updated so CI can repeat those checks after each deployment without access to application
@@ -95,7 +98,10 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | Latest merged AWS/browser deployment | Passed | Main workflow-dispatch run `34024320223` passed correctness, Docker, SAM, connected configuration deployment, static publishing and 23/23 post-deploy checks at commit `1a2bec4`; no inference smoke ran |
 | Live-provider AWS/browser deployment | Passed | Main run `34030441378` deployed commit `e5c2af1` in `live` mode, published the polished login page, verified public health and the unsigned `401` boundary, and passed 23/23 posture checks |
 | OneMap credential and typed adapters | Passed live | Search returned five Toa Payoh candidates and one Gardens by the Bay candidate; walking routing returned fresh non-fixture provenance (`onemap_walk+transport_cost_policy_v1`), 76 minutes and 6,271 m |
-| Controlled Bedrock canary | Passed | One regional Claude 3 Haiku inference used 783 input and 256 output tokens; deterministic validation passed before the journey was accepted, and DynamoDB/action-intent/approval/monitor readback passed |
+| Controlled Bedrock canary (deterministic providers) | Passed | One regional Claude 3 Haiku inference used 783 input and 256 output tokens; deterministic validation passed before the journey was accepted, and DynamoDB/action-intent/approval/monitor readback passed |
+| Live-provider journey canary | Partial / safe failure | Qualified origin `Toa Payoh MRT Station (NS19)` resolved uniquely; a validated fallback draft used fresh non-fixture OneMap drive routes, persisted in DynamoDB, required a scoped action intent, activated at version 2, and monitoring returned non-fixture `data.gov.sg_weather_psi+lta_pub_flood_train` provenance with no triggers. A later OneMap request received HTTP 429 and failed closed with `tool_unavailable`. |
+| Live Bedrock account readiness | External blocker observed | Regional Claude 3 Haiku is authorized and region/entitlement available, but its Marketplace agreement is `NOT_AVAILABLE`; Nova Micro is active but its APAC profile is explicitly denied by the workshop Organization SCP when routing to `ap-southeast-2`. No model output bypassed the deterministic parser/validator. |
+| Current Python 3.12 application gate | Passed with known local audit limitation | 199 tests passed with 90.45% branch coverage; Ruff, strict mypy, Bandit and browser gates passed. The portable Windows interpreter still lacks `venv.EnvBuilder` for local `pip-audit`; Linux CI passes the audit. |
 | Windows-local Python 3.12 gate | Platform discrepancy | 172 tests passed with 90.77% branch coverage on `feature/r4-cost-alerting`; the portable Python distribution lacks the standard-library `venv.EnvBuilder`, so local `pip-audit` cannot start, while the Linux main gate passes dependency audit |
 | Durable trust/location deployment | Passed | PR #36 merged at `e599875`; main run `34022280410` deployed and verified it successfully |
 | Configurable Bedrock rollout branch | 192 tests passed | Python 3.12.10, 90.43% branch coverage; Ruff, strict mypy, Bandit, CloudFormation/SAM lint, workflow YAML and 19 browser-auth tests passed locally; Windows lacks `make` for the custom SAM build and its portable Python still cannot start `pip-audit`, so Linux CI remains authoritative for those two gates |
@@ -155,6 +161,10 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-configurable-bedrock-rollout` | Exact-resource Bedrock rollout variables, capped output, manual deployment trigger, connected-state verification and token-safe smoke behavior | Merged in PR #37; workflow-dispatch run `34024320223` deployed successfully and passed 23/23 posture checks with Bedrock `CONNECTED`; inference smoke was intentionally skipped |
 | `feature/r4-live-provider-deployment` | Protected-environment switch between deterministic and live providers, including fail-closed secret requirements and live-aware deployment verification | Merged in PR #40 |
 | `feature/r3-login-page-polish` | Responsive signed-out welcome/access layout with unavailable navigation and unresolved provenance hidden | Merged in PR #41; main run `34030441378` deployed successfully |
+| `feature/r1-consent-discovery` | Inactive consent status exposes the current server-owned policy and required categories | Merged in PR #43 |
+| `feature/r3-consent-onboarding` | Explicit post-login planning-consent screen with authenticated idempotent submission and retryable failures | Merged in PR #44; main run `34031706820` deployed successfully |
+| `feature/r1-location-label-parsing` | Preserve qualified OneMap labels containing station codes and punctuation in deterministic fallback parsing | Merged in PR #45 |
+| `feature/r3-specific-onemap-origin` | Use the unique `Toa Payoh MRT Station (NS19)` sample origin and guard it in static checks | Merged in PR #46; main run `34032472349` deployed successfully |
 
 ## External setup still required
 
@@ -170,6 +180,14 @@ The repository keeps each feature boundary visible and uses incremental commits.
     account-level billing-management permissions.
 8. If operational email alerts are desired, set `ADAPTSG_ALARM_NOTIFICATION_EMAIL` and confirm the
     SNS subscription.
+9. In the AWS Bedrock console, review and accept the Marketplace agreement for Claude 3 Haiku
+   (`anthropic.claude-3-haiku-20240307-v1:0`, product `prod-ozonys2hmmpeu`). Recheck
+   `get-foundation-model-availability` until `agreementAvailability.status` is available before the
+   final live inference rehearsal. Do not grant permanent Marketplace subscription permissions to
+   the Lambda runtime role.
+10. Ask the workshop administrator to allow every destination Region in an APAC inference profile
+    before selecting Nova Micro; the current Organization SCP explicitly denies its
+    `ap-southeast-2` destination.
 
 Do not mark live mode demo-ready until all provider timestamps and sources appear correctly in the UI.
 
