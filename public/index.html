@@ -275,6 +275,15 @@ details.tech .ev{padding:0 16px 16px;border-top:1px solid var(--fog);padding-top
 .auth-actions .btn{width:100%}
 .auth-fineprint{border-top:1px solid var(--ash);padding-top:16px;font-size:14px;
   color:var(--muted);line-height:1.5}
+.consent-shell{width:100%;max-width:760px;margin:24px auto 0;display:flex;
+  flex-direction:column;gap:24px}
+.consent-shell h1{font-size:clamp(38px,5vw,56px);font-weight:var(--w-display);
+  letter-spacing:-.015em;line-height:1.05}
+.consent-shell h1:focus{outline:none}
+.consent-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.consent-list li{border:1px solid var(--fog);border-radius:var(--r-card);background:var(--mist);
+  padding:14px 16px;font-size:16px;font-weight:var(--w-ui)}
+.consent-actions{padding-top:4px}
 .prompt{border:1px solid var(--fog);border-radius:var(--r-lg);padding:24px;background:var(--canvas);
   display:flex;flex-direction:column;gap:12px}
 .prompt label{font-weight:var(--w-mid);font-size:17px}
@@ -309,6 +318,9 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
     padding-top:10px}
   .auth-panel{padding:24px}
   .auth-panel h2{font-size:26px}
+  .consent-shell{margin-top:0}
+  .consent-shell h1{font-size:36px}
+  .consent-list{grid-template-columns:minmax(0,1fr)}
   .prompt{padding:18px}
   .band{padding:16px 18px}
   .band h2{font-size:22px}
@@ -377,7 +389,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
 
           <div class="prompt">
             <label for="prompt">Tell AdaptSG about the day in your own words &mdash; where you would like to go in Singapore, when, and anything needed to stay safe and comfortable.</label>
-            <textarea id="prompt">Plan a 10 am-5 pm day for me and my 72-year-old mother, starting from Toa Payoh. She uses a wheelchair, should not walk more than 400 metres at once, needs lunch before 1 pm, and we have a $70 transport and activity budget. We would like to visit Gardens by the Bay.</textarea>
+            <textarea id="prompt">Plan a 10 am-5 pm day for me and my 72-year-old mother, starting from Toa Payoh MRT Station. She uses a wheelchair, should not walk more than 400 metres at once, needs lunch before 1 pm, and we have a $70 transport and activity budget. We would like to visit Gardens by the Bay.</textarea>
             <p class="note">This box is filled in with an example. Edit it to describe your own day, or use it as it is.</p>
             <label for="journey-date">Journey date</label>
             <input id="journey-date" type="date">
@@ -520,6 +532,26 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
           </section>
         </main>
       </div>
+
+      <div class="work single view" id="view-consent" hidden>
+        <main class="consent-shell">
+          <div class="pagehead">
+            <p class="eyebrow">Your choice</p>
+            <h1 id="consent-title" tabindex="-1">Before we plan your journey</h1>
+          </div>
+          <p class="auth-lede">AdaptSG needs your permission to use the details you enter for journey planning. The server decides the current policy and data categories; this page cannot broaden them.</p>
+          <ul class="consent-list" id="consent-categories" aria-label="Information used for journey planning"></ul>
+          <div class="band notice">
+            <h3>What this permission means</h3>
+            <p>Your inputs can be used to check routes, mobility needs and live provider information for your journey. You can revoke this permission later; revoked records are retained only for the configured audit period.</p>
+          </div>
+          <div class="actions consent-actions">
+            <button type="button" id="grant-consent" class="btn primary">Agree and continue</button>
+            <button type="button" id="decline-consent" class="btn ghost">Not now</button>
+          </div>
+          <p class="foot">Planning consent policy: <span id="consent-policy"></span>. AdaptSG does not book, purchase or pay for anything.</p>
+        </main>
+      </div>
     </div>
   </div>
 </div>
@@ -546,6 +578,8 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   let currentDecisionTarget = null;
   let currentProposal = null;
   let lastViewId = 'view-landing';
+  let journeyNavigationEnabled = false;
+  let pendingConsentStatus = null;
 
   // Session-only monitoring memory (never persisted): the composer's replan cap is
   // learned reactively from a server error, because no response exposes max_replans.
@@ -797,6 +831,8 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
     authentication_failed: (detail) => `Sign-in could not be completed. ${detail}`,
     configuration_error: (detail) =>
       `AdaptSG could not load its configuration and cannot continue safely. ${detail}`,
+    consent_required: () =>
+      'Journey-planning permission is required before AdaptSG can use your inputs or contact live providers.',
   };
 
   function describe(error) {
@@ -836,7 +872,9 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   function updateHeaderAuthControls() {
     const authEnabled = Boolean(cfg && cfg.auth);
     const signedIn = Boolean(authEnabled && accessToken);
-    if ($('trip-navigation')) $('trip-navigation').hidden = authEnabled && !signedIn;
+    if ($('trip-navigation')) {
+      $('trip-navigation').hidden = authEnabled && (!signedIn || !journeyNavigationEnabled);
+    }
     if ($('sign-out')) $('sign-out').hidden = !signedIn;
   }
 
@@ -848,9 +886,81 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   // typed domain-error codes above, so a caller must not reactivate the landing view
   // or render a generic transport alert on top of it.
   function enterSignedOutState() {
+    journeyNavigationEnabled = false;
+    pendingConsentStatus = null;
     updateHeaderAuthControls();
     $('mode-banner').hidden = true;
     activateView('view-signedout', () => { if ($('signedout-title')) $('signedout-title').focus(); });
+  }
+
+  const CONSENT_CATEGORY_LABELS = {
+    journey_input: 'Journey details you enter',
+    mobility_accessibility: 'Mobility and accessibility needs',
+    location_routing: 'Locations and route checks',
+    provider_processing: 'Live transport and environment checks',
+  };
+
+  function enterConsentState(status) {
+    if (!status || status.active !== false || typeof status.policy_version !== 'string'
+      || !status.policy_version || !Array.isArray(status.categories) || status.categories.length === 0
+      || status.categories.some((category) => typeof category !== 'string' || !category)) {
+      throw new Error('the server did not provide a valid consent contract');
+    }
+    pendingConsentStatus = status;
+    journeyNavigationEnabled = false;
+    updateHeaderAuthControls();
+    $('mode-banner').hidden = true;
+    $('consent-policy').textContent = status.policy_version;
+    $('consent-categories').innerHTML = status.categories
+      .map((category) => `<li>${safe(CONSENT_CATEGORY_LABELS[category] || category.replaceAll('_', ' '))}</li>`)
+      .join('');
+    activateView('view-consent', () => { if ($('consent-title')) $('consent-title').focus(); });
+  }
+
+  async function continueAfterAuthentication() {
+    try {
+      const status = await read('/api/v1/consents/journey-planning/status');
+      if (status.active === true) {
+        pendingConsentStatus = null;
+        bootLanding();
+        return;
+      }
+      enterConsentState(status);
+    } catch (error) {
+      if (error.code === 'authentication_expired') {
+        enterSignedOutState();
+        return;
+      }
+      enterSignedOutState();
+      setAlert({code: 'consent_required', message: error.message});
+    }
+  }
+
+  async function grantPlanningConsent() {
+    if (!pendingConsentStatus) return;
+    clearAlert();
+    $('grant-consent').disabled = true;
+    try {
+      await mutate(
+        '/api/v1/consents',
+        {
+          purpose: 'journey_planning',
+          data_categories: pendingConsentStatus.categories,
+          policy_version: pendingConsentStatus.policy_version,
+        },
+        actionKey(),
+      );
+      pendingConsentStatus = null;
+      bootLanding();
+    } catch (error) {
+      if (error.code === 'authentication_expired') {
+        enterSignedOutState();
+        return;
+      }
+      setAlert(error);
+    } finally {
+      $('grant-consent').disabled = false;
+    }
   }
 
   function chip(kind, icon, text) {
@@ -1439,6 +1549,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   }
 
   function bootLanding() {
+    journeyNavigationEnabled = true;
     updateHeaderAuthControls();
     $('mode-banner').hidden = false;
     activateView('view-landing', null);
@@ -1465,7 +1576,7 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
     if (callbackParams) {
       try {
         await handleAuthCallback(callbackParams);
-        bootLanding();
+        await continueAfterAuthentication();
       } catch (callbackError) {
         enterSignedOutState();
         setAlert({code: 'authentication_failed', message: callbackError.message});
@@ -1476,10 +1587,12 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
       enterSignedOutState();
       return;
     }
-    bootLanding();
+    await continueAfterAuthentication();
   }
 
   async function signOut() {
+    journeyNavigationEnabled = false;
+    pendingConsentStatus = null;
     clearTokens();
     sessionStorage.removeItem(PKCE_VERIFIER_KEY);
     sessionStorage.removeItem(PKCE_STATE_KEY);
@@ -1497,6 +1610,8 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
   $('sign-in').onclick = () => beginSignIn('signin');
   if ($('signup')) $('signup').onclick = () => beginSignIn('signup');
   if ($('sign-out')) $('sign-out').onclick = (event) => { event.preventDefault(); signOut(); };
+  $('grant-consent').onclick = () => grantPlanningConsent();
+  $('decline-consent').onclick = () => signOut();
 
   $('create').onclick = async () => {
     clearAlert();
@@ -1517,6 +1632,10 @@ input[type="date"]{width:100%;border:1px solid var(--fog);border-radius:var(--r-
     } catch (error) {
       if (error.code === 'authentication_expired') {
         enterSignedOutState();
+        return;
+      }
+      if (error.code === 'consent_required') {
+        await continueAfterAuthentication();
         return;
       }
       activateView('view-landing', null);
