@@ -4,9 +4,10 @@ Last updated: 2026-09-06 (Asia/Singapore)
 
 ## Current status
 
-The corrected Cognito-aware `main` deployment now passes. Its internal Lambda/DynamoDB smoke
-emulates API Gateway's post-authorizer claim shape, while a separate real API Gateway assertion
-still verifies that an unsigned protected request receives `401`.
+The latest `main` deployment passes with durable consent, authority-grant, action-intent, and audit
+records. Its internal Lambda/DynamoDB smoke emulates API Gateway's post-authorizer claim shape,
+while a separate real API Gateway assertion still verifies that an unsigned protected request
+receives `401`.
 
 Starter codebase complete and locally verified. The deterministic demo is ready for team rehearsal. A Kubernetes development environment is running through Argo CD on the LAN. The authenticated AWS v2 stack is deployed with Cognito, an OAuth-scoped HTTP API, Python 3.12 Lambda, DynamoDB state, private S3 evidence, API access logs, dashboards and alarms. The AWS static browser client is deployed at `https://d3butmnw1t1cuw.cloudfront.net` with private S3, CloudFront Origin Access Control, same-origin API proxying, public runtime auth configuration, verified-email Cognito self-signup and authorization-code/PKCE controls. Bedrock remains disabled. The Role 1 identity/provider separation, Role 3 AWS browser metadata and corrected deployment smoke are merged, deployed and passing. Manual two-browser owner-isolation acceptance remains.
 
@@ -83,9 +84,10 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 | AWS deployment posture | 22/22 passed | Live read-only verification in `ap-southeast-1`; private/versioned/encrypted S3, signed CloudFront origin, HTTPS and uncached API path, API metrics/logs/throttles, encrypted DynamoDB TTL, public Cognito PKCE client, and Bedrock disabled |
 | AWS alarm-notification bootstrap | Passed | `adaptsg-cicd-bootstrap` reached `UPDATE_COMPLETE`; the execution role can manage only `adaptsg-demo-operations-alarms`, and the GitHub deploy role has read-only attributes access to that topic |
 | Current Python 3.12 CI gate | Passed | Branch run `34012492178` passed correctness, the 90% coverage threshold, dependency audit, Docker build and SAM validate/build; deployment was correctly skipped outside `main` |
-| Latest merged AWS/browser deployment | Passed | Main run `34013996057` passed correctness, Docker, SAM, token-free deployment, static publishing and post-deploy verification at commit `193c7eb` |
+| Latest merged AWS/browser deployment | Passed | Main run `34022280410` passed correctness, Docker, SAM, token-free deployment, static publishing and post-deploy verification at commit `e599875` |
 | Windows-local Python 3.12 gate | Platform discrepancy | 172 tests passed with 90.77% branch coverage on `feature/r4-cost-alerting`; the portable Python distribution lacks the standard-library `venv.EnvBuilder`, so local `pip-audit` cannot start, while the Linux main gate passes dependency audit |
-| Durable trust/location branch | 188 tests passed | Python 3.12.10, 90.43% branch coverage; Ruff, strict mypy, Bandit, CloudFormation lint and browser checks passed locally; `pip-audit` retains the documented portable-Windows startup issue |
+| Durable trust/location deployment | Passed | PR #36 merged at `e599875`; main run `34022280410` deployed and verified it successfully |
+| Configurable Bedrock rollout branch | 192 tests passed | Python 3.12.10, 90.43% branch coverage; Ruff, strict mypy, Bandit, CloudFormation/SAM lint, workflow YAML and 19 browser-auth tests passed locally; Windows lacks `make` for the custom SAM build and its portable Python still cannot start `pip-audit`, so Linux CI remains authoritative for those two gates |
 | Kubernetes in-pod full gate | Passed | 71 tests, 98.1% coverage, lint, typing, Bandit, audit and browser syntax |
 | Argo CD development app | Synced / Healthy | PR-branch revision `2445468`; awaiting GitOps PR merge |
 | LAN DNS/TLS/health | Passed | `sim-next.lab.packetcraft.dev` -> `192.168.1.250`; trusted HTTPS 200 |
@@ -100,11 +102,11 @@ unavailable locally, so SAM validation and builds run in GitHub Actions.
 - [x] Replaced the public AWS Function URL template with an authenticated HTTP API/Cognito/DynamoDB shape.
 - [x] Bound API Gateway-verified Cognito subjects to server-owned journeys.
 - [x] Added the single-caregiver ADR and point-in-time recovery runbook.
-- [x] Implement transactional DynamoDB persistence for consent, authority grants, intents and
-      per-resource audit chains on `feature/r1-durable-trust-records`; merge/deploy is pending.
+- [x] Implement, merge, and deploy transactional DynamoDB persistence for consent, authority grants,
+      intents and per-resource audit chains.
 - [x] Complete the Role 3 static Cognito/PKCE browser client.
 - [ ] Complete live allowlist verification.
-- [ ] Merge/deploy the durable trust-record branch, run its CI/SAM gates and complete a restore drill.
+- [ ] Complete a DynamoDB point-in-time restore drill in a non-production table.
 - [x] Add local CloudFormation schema lint plus rollback-safe table protection controls.
 - [x] Add explicit OAuth-scoped API routes, privacy-safe API access logs and edge throttling on the Role 4 recovery branch.
 - [x] Add a read-only post-deploy verifier and apply its scoped GitHub role permissions; live demo passed 22/22 checks.
@@ -138,14 +140,16 @@ The repository keeps each feature boundary visible and uses incremental commits.
 | `feature/r4-cost-alerting` | Scoped SNS delivery for Lambda error/throttle alarms plus post-deploy policy verification | Merged in PR #30 |
 | `feature/r3-functional-aws-demo` | Remove stale Vercel browser metadata and reverify the complete static journey/auth flow | Merged in PR #32 |
 | `feature/r4-authenticated-lambda-smoke` | Cognito-aware direct-Lambda smoke plus real unsigned API rejection assertion | Merged in PR #35; deployment passes |
-| `feature/r1-durable-trust-records` | Durable consent/grants/intents, atomic per-journey audit and strict location ambiguity handling | GitHub runs `34021788823` and `34021804991` passed correctness/security, Docker and SAM; deployment correctly skipped outside `main`; awaiting review |
+| `feature/r1-durable-trust-records` | Durable consent/grants/intents, atomic per-journey audit and strict location ambiguity handling | Merged in PR #36; main run `34022280410` deployed successfully |
+| `feature/r4-configurable-bedrock-rollout` | Exact-resource Bedrock rollout variables, capped output, manual deployment trigger, connected-state verification and token-safe smoke behavior | In progress; Bedrock remains `DISABLED` until merge and controlled activation |
 
 ## External setup still required
 
 1. Request and verify OneMap API token access.
 2. Request SLA approval for BFA routing before setting `ONEMAP_BFA_ENABLED=true`.
 3. Request an LTA DataMall account key.
-4. Confirm the selected Bedrock model is enabled in `us-east-1`.
+4. Complete Anthropic model access if required, verify the Claude Haiku 4.5 global inference profile
+   from `ap-southeast-1`, then follow `infra/aws/README.md` for the controlled exact-ARN rollout.
 5. Refresh hackathon AWS session credentials immediately before the live demo.
 6. Obtain the required review for AdaptSG PR #9; all CI checks are passing.
 7. Review and merge homelab GitOps PR #1, then retarget the live Application from the PR branch to `main`.
