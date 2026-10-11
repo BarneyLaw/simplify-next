@@ -2,7 +2,7 @@
 bandit[toml]>=1.8,<2
 cfn-lint>=1.56,<2
 debugpy>=1.8,<2
-mypy>=1.14,<2
+mypy>=1.14,<3
 pip-audit>=2.8,<3
 pytest>=9.0.3,<10
 pytest-cov>=6,<7
